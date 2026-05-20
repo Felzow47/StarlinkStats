@@ -45,9 +45,25 @@ class StarlinkClient:
             snapshot.state = status_dict.get("state") or "UNKNOWN"
             device_info = getattr(status, "device_info", None)
             if device_info is not None:
+                snapshot.device_id = getattr(device_info, "id", None)
+                snapshot.hardware_version = getattr(
+                    device_info, "hardware_version", None
+                )
                 snapshot.software_version = getattr(
                     device_info, "software_version", None
                 )
+                snapshot.hardware_self_test = getattr(
+                    device_info, "hardware_self_test", None
+                )
+
+            device_state = getattr(status, "device_state", None)
+            snapshot.stowed = _get_attr_bool(status, "stowed") or _get_attr_bool(
+                device_state, "stowed"
+            )
+            snapshot.disablement_code = _str_or_none(
+                getattr(status, "disablement_code", None)
+                or getattr(device_state, "disablement_code", None)
+            )
 
             dl = getattr(status, "downlink_throughput_bps", None) or status_dict.get(
                 "downlink_throughput_bps"
@@ -59,6 +75,17 @@ class StarlinkClient:
                 snapshot.downlink_mbps = dl / 1_000_000
             if ul is not None:
                 snapshot.uplink_mbps = ul / 1_000_000
+
+            lat = getattr(status, "pop_ping_latency_ms", None) or status_dict.get(
+                "pop_ping_latency_ms"
+            )
+            drop = getattr(status, "pop_ping_drop_rate", None) or status_dict.get(
+                "pop_ping_drop_rate"
+            )
+            snapshot.pop_ping_latency_ms = _float_or_none(lat)
+            snapshot.pop_ping_drop_rate = _float_or_none(drop)
+            if snapshot.pop_ping_drop_rate is not None:
+                snapshot.pop_ping_drop_rate *= 100.0
 
             snapshot.currently_obstructed = bool(
                 status_dict.get("currently_obstructed")
@@ -78,6 +105,18 @@ class StarlinkClient:
                 "alert_power_supply_thermal_throttle", False
             )
             snapshot.alert_obstructed = alert_dict.get("alert_obstructed", False)
+            snapshot.alert_thermal_throttle = alert_dict.get(
+                "alert_thermal_throttle", False
+            )
+            snapshot.alert_mast_not_near_vertical = alert_dict.get(
+                "alert_mast_not_near_vertical", False
+            )
+            snapshot.alert_install_pending = alert_dict.get(
+                "alert_install_pending", False
+            )
+            snapshot.alert_moving_too_fast_for_policy = alert_dict.get(
+                "alert_moving_too_fast_for_policy", False
+            )
 
             snapshot.boresight_azimuth_deg = _get_attr_float(
                 status, "boresight_azimuth_deg"
@@ -127,3 +166,19 @@ def _float_or_none(val) -> Optional[float]:
         return float(val)
     except (TypeError, ValueError):
         return None
+
+
+def _str_or_none(val) -> Optional[str]:
+    if val is None:
+        return None
+    text = str(val).strip()
+    return text if text else None
+
+
+def _get_attr_bool(obj, attr: str) -> Optional[bool]:
+    if obj is None:
+        return None
+    val = getattr(obj, attr, None)
+    if val is None:
+        return None
+    return bool(val)

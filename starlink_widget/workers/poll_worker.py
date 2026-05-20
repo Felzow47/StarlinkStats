@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from starlink_widget.core.config import AppConfig
@@ -45,27 +47,11 @@ class PollWorker(QThread):
 
             if visible:
                 dish = self._client.fetch_status()
-                snapshot.dish_reachable = dish.dish_reachable
-                snapshot.state = dish.state
-                snapshot.software_version = dish.software_version
-                snapshot.downlink_mbps = dish.downlink_mbps
-                snapshot.uplink_mbps = dish.uplink_mbps
-                snapshot.currently_obstructed = dish.currently_obstructed
-                snapshot.fraction_obstructed = dish.fraction_obstructed
-                snapshot.alert_obstructed = dish.alert_obstructed
-                snapshot.alert_slow_ethernet = dish.alert_slow_ethernet
-                snapshot.alert_thermal_shutdown = dish.alert_thermal_shutdown
-                snapshot.alert_motors_stuck = dish.alert_motors_stuck
-                snapshot.alert_heating = dish.alert_heating
-                snapshot.alert_power_thermal_throttle = (
-                    dish.alert_power_thermal_throttle
-                )
-                snapshot.boresight_azimuth_deg = dish.boresight_azimuth_deg
-                snapshot.boresight_elevation_deg = dish.boresight_elevation_deg
-                snapshot.desired_azimuth_deg = dish.desired_azimuth_deg
-                snapshot.desired_elevation_deg = dish.desired_elevation_deg
-                snapshot.azimuth_delta_deg = dish.azimuth_delta_deg
-                snapshot.error_message = dish.error_message
+                skip = {"on_starlink_lan", "internet_ok", "critical_alerts"}
+                for f in fields(StatusSnapshot):
+                    if f.name in skip:
+                        continue
+                    setattr(snapshot, f.name, getattr(dish, f.name))
 
                 if dish.dish_reachable:
                     snapshot.internet_ok = check_internet(self.config.ping_target)

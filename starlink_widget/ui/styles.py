@@ -2,7 +2,7 @@
 
 from starlink_widget.core.state import HealthState
 
-WIDGET_WIDTH = 268
+WIDGET_WIDTH = 300
 CORNER_RADIUS = 16
 INNER_RADIUS = 12
 
@@ -11,9 +11,9 @@ CARD_BG = (22, 22, 24, 242)
 CARD_BG_FLASH = (48, 18, 22, 248)
 CARD_BORDER = (255, 255, 255, 18)  # ~7 % blanc
 
-# Tuiles métriques internes
-TILE_BG = (44, 44, 48, 255)
-TILE_BORDER = (255, 255, 255, 12)
+# Tuiles métriques internes (style carte Starlink)
+TILE_BG = (38, 38, 42, 250)
+TILE_BORDER = (255, 255, 255, 14)
 
 TEXT_PRIMARY = "#ffffff"
 TEXT_SECONDARY = "#8e8e93"
