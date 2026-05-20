@@ -34,12 +34,15 @@ def compute_azimuth_delta(
         return None
 
 
+def is_obstructed(snapshot: StatusSnapshot) -> bool:
+    """Obstruction active uniquement si currently_obstructed est True (gRPC)."""
+    return snapshot.currently_obstructed is True
+
+
 def collect_critical_alerts(snapshot: StatusSnapshot) -> List[str]:
     alerts: List[str] = []
-    if snapshot.currently_obstructed or snapshot.fraction_obstructed > 0:
+    if is_obstructed(snapshot):
         alerts.append("Obstruction")
-    if snapshot.alert_obstructed:
-        alerts.append("Obstruction (alerte)")
     if snapshot.alert_slow_ethernet:
         alerts.append("Ethernet lent")
     if snapshot.alert_thermal_shutdown:
