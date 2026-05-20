@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Deque, Dict, List, Optional, Set
 
-from PyQt6.QtCore import QPoint, QRectF, QSettings, Qt, QTimer
+from PyQt6.QtCore import QPoint, QRect, QRectF, QSettings, Qt, QTimer
 from PyQt6.QtGui import (
     QAction,
     QColor,
@@ -63,6 +63,8 @@ from starlink_widget.workers.poll_worker import PollWorker
 SETTINGS_ORG = "StarlinkWidget"
 SETTINGS_APP = "Widget"
 HISTORY_LEN = 60
+SWAP_OVERLAP_THRESHOLD = 0.5
+HIGHLIGHT_OVERLAP_THRESHOLD = 0.28
 
 
 class StatusDot(QWidget):
@@ -99,6 +101,11 @@ class MainWindow(QWidget):
         )
         self._settings_dialog: SettingsDialog | None = None
         self._float_tile: MetricTile | None = None
+        self._float_target_pos = QPoint()
+        self._float_pointer_global = QPoint()
+        self._float_smooth_timer = QTimer(self)
+        self._float_smooth_timer.setInterval(16)
+        self._float_smooth_timer.timeout.connect(self._tick_float_smooth)
 
         self.setObjectName("StarlinkWidget")
         self.setWindowFlags(
@@ -158,56 +165,127 @@ class MainWindow(QWidget):
         self.setStyleSheet(label_styles())
         self._apply_paint_state(HealthState.GREEN)
 
-    def _rebuild_metrics_grid(self) -> None:
-        while self._metrics_layout.count():
-            item = self._metrics_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        self._metric_tiles.clear()
+    def _create_metric_tile(self, key: str) -> MetricTile:
+        field = FIELD_BY_KEY[key]
+        prefs = get_card_pref(key)
+        tile = MetricTile(field.label, key, prefs)
+        tile.hide()
+        tile.float_move.connect(self._on_tile_float_move)
+        tile.float_end.connect(self._on_tile_float_end)
+        tile.prefs_changed.connect(self._on_tile_prefs_changed)
+        tile.layout_preview.connect(self._on_tile_layout_preview)
+        return tile
 
-        metric_keys = load_ordered_metric_keys()
+    def _remove_metric_tile(self, key: str) -> None:
+        tile = self._metric_tiles.pop(key, None)
+        if tile is None:
+            return
+        if tile.parent() is self._metrics_wrap:
+            self._metrics_layout.removeWidget(tile)
+        tile.hide()
+        tile.setParent(None)
+        tile.deleteLater()
+
+    def _rebuild_metrics_grid(self) -> None:
+        for key in list(self._metric_tiles.keys()):
+            self._remove_metric_tile(key)
+
         placement: List[tuple[str, MetricTile, object]] = []
-        for key in metric_keys:
-            field = FIELD_BY_KEY[key]
-            prefs = get_card_pref(key)
-            tile = MetricTile(field.label, key, prefs)
-            tile.float_move.connect(self._on_tile_float_move)
-            tile.float_end.connect(self._on_tile_float_end)
-            tile.prefs_changed.connect(self._on_tile_prefs_changed)
+        for key in load_ordered_metric_keys():
+            tile = self._create_metric_tile(key)
             self._metric_tiles[key] = tile
-            placement.append((key, tile, prefs))
+            placement.append((key, tile, tile.prefs()))
         place_metric_tiles(self._metrics_layout, placement)
+        for tile in self._metric_tiles.values():
+            tile.show()
         self._sync_customize_mode()
 
         if self._last_snapshot is not None:
             self._apply_snapshot(self._last_snapshot)
 
-    def _relayout_grid_positions(self) -> None:
-        """Réorganise la grille sans recréer les cartes (évite fenêtres fantômes)."""
+    def _on_tile_layout_preview(self, _key: str) -> None:
+        self._relayout_grid_positions(animated=False)
+
+    def _clear_drop_highlights(self) -> None:
+        for tile in self._metric_tiles.values():
+            tile.set_drop_target(False)
+
+    def _relayout_grid_positions(self, *, animated: bool = False) -> None:
+        """Réorganise la grille ; animation de glissement optionnelle."""
+        float_key = self._float_tile.field_key if self._float_tile else None
+        starts: Dict[str, object] = {}
+        if animated:
+            for key, tile in self._metric_tiles.items():
+                if key == float_key or tile.parent() is not self._metrics_wrap:
+                    continue
+                starts[key] = tile.geometry()
+
         while self._metrics_layout.count():
             self._metrics_layout.takeAt(0)
+
         metric_keys = load_ordered_metric_keys()
         placement: List[tuple[str, MetricTile, CardPrefs]] = []
         for key in metric_keys:
-            if key not in self._metric_tiles:
+            if key not in self._metric_tiles or key == float_key:
                 continue
             tile = self._metric_tiles[key]
             placement.append((key, tile, tile.prefs()))
         place_metric_tiles(self._metrics_layout, placement)
+        self._metrics_layout.activate()
+
+        if animated and starts:
+            from starlink_widget.ui.animations import animate_geometry
+
+            for key, tile in self._metric_tiles.items():
+                if key == float_key or key not in starts:
+                    continue
+                end = tile.geometry()
+                start = starts[key]
+                if start.topLeft() != end.topLeft():
+                    tile.setGeometry(start)
+                    animate_geometry(tile, end, self._metrics_wrap)
+
+        for tile in self._metric_tiles.values():
+            tile.clear_width_lock()
+        if self._float_tile is not None:
+            self._float_tile.setParent(self._metrics_wrap)
+            self._float_tile.raise_()
+            self._float_tile.move(self._float_target_pos)
         self._fit_to_content()
 
     def _reload_preferences(self) -> None:
         self._visible_fields = load_visible_fields()
         existing = set(self._metric_tiles.keys())
         wanted = set(load_ordered_metric_keys())
-        if existing == wanted and wanted:
-            self._relayout_grid_positions()
+        removed = existing - wanted
+        added = wanted - existing
+
+        for key in removed:
+            self._remove_metric_tile(key)
+
+        for key in added:
+            tile = self._create_metric_tile(key)
+            self._metric_tiles[key] = tile
+
+        if removed or added:
+            self._relayout_grid_positions(animated=False)
+            for tile in self._metric_tiles.values():
+                tile.show()
             if self._last_snapshot is not None:
                 self._apply_snapshot(self._last_snapshot)
+            self._sync_customize_mode()
+            self._fit_to_content()
             return
-        self._rebuild_metrics_grid()
-        self._fit_to_content()
+
+        if wanted:
+            for key in wanted:
+                tile = self._metric_tiles.get(key)
+                if tile is not None:
+                    tile.set_prefs(get_card_pref(key))
+            self._relayout_grid_positions(animated=True)
+            if self._last_snapshot is not None:
+                self._apply_snapshot(self._last_snapshot)
+            self._fit_to_content()
 
     def _is_customize_mode(self) -> bool:
         return (
@@ -222,21 +300,39 @@ class MainWindow(QWidget):
         for tile in self._metric_tiles.values():
             tile.set_customize_mode(on)
 
-    def _tile_at_global(self, global_pos: QPoint) -> MetricTile | None:
-        """Carte sous le curseur (grille + carte flottante exclue de la cible)."""
-        if self._float_tile is not None:
-            floating_key = self._float_tile.field_key
-        else:
-            floating_key = None
+    def _float_geometry_local(self) -> QRect | None:
+        if self._float_tile is None:
+            return None
+        pos = self._float_tile.pos()
+        return QRect(pos.x(), pos.y(), self._float_tile.width(), self._float_tile.height())
+
+    def _overlap_ratio(self, float_geo: QRect, tile: MetricTile) -> float:
+        """Part de la carte flottante recouverte par une autre carte (0–1)."""
+        inter = float_geo.intersected(tile.geometry())
+        if inter.isEmpty():
+            return 0.0
+        float_area = float_geo.width() * float_geo.height()
+        if float_area <= 0:
+            return 0.0
+        return (inter.width() * inter.height()) / float_area
+
+    def _best_overlap_target(self) -> tuple[MetricTile | None, float]:
+        float_geo = self._float_geometry_local()
+        if float_geo is None:
+            return None, 0.0
+        drag_key = self._float_tile.field_key if self._float_tile else None
+        best: MetricTile | None = None
+        best_ratio = 0.0
         for tile in self._metric_tiles.values():
-            if not tile.isVisible() or tile.field_key == floating_key:
+            if not tile.isVisible() or tile.field_key == drag_key:
                 continue
             if tile.parent() is not self._metrics_wrap:
                 continue
-            local = tile.mapFromGlobal(global_pos)
-            if tile.rect().contains(local):
-                return tile
-        return None
+            ratio = self._overlap_ratio(float_geo, tile)
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best = tile
+        return best, best_ratio
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -293,35 +389,117 @@ class MainWindow(QWidget):
             return
         if self._float_tile is None:
             self._float_tile = tile
+            if tile.parent() is self._metrics_wrap:
+                self._metrics_layout.removeWidget(tile)
             self._float_tile.setParent(self._metrics_wrap)
             self._float_tile.raise_()
             self._float_tile.set_floating(True)
-            self._float_tile.setFixedWidth(tile.width())
-        local = self._metrics_wrap.mapFromGlobal(global_top_left)
-        self._float_tile.move(local)
+            self._float_tile.setFixedWidth(max(tile.width(), 120))
+            self._float_target_pos = self._metrics_wrap.mapFromGlobal(global_top_left)
+            self._float_tile.move(self._float_target_pos)
+            self._relayout_grid_positions(animated=False)
+        self._float_target_pos = self._metrics_wrap.mapFromGlobal(global_top_left)
+        ft = self._float_tile
+        self._float_pointer_global = global_top_left + QPoint(
+            ft.width() // 2,
+            ft.height() // 2,
+        )
+        if not self._float_smooth_timer.isActive():
+            self._float_smooth_timer.start()
 
-    def _on_tile_float_end(self, global_pos: QPoint) -> None:
+    def _tick_float_smooth(self) -> None:
+        if self._float_tile is None:
+            self._float_smooth_timer.stop()
+            return
+        cur = self._float_tile.pos()
+        tgt = self._float_target_pos
+        if (
+            abs(cur.x() - tgt.x()) > 1
+            or abs(cur.y() - tgt.y()) > 1
+        ):
+            nx = cur.x() + int((tgt.x() - cur.x()) * 0.55)
+            ny = cur.y() + int((tgt.y() - cur.y()) * 0.55)
+            if abs(nx - tgt.x()) <= 1 and abs(ny - tgt.y()) <= 1:
+                self._float_tile.move(tgt)
+            else:
+                self._float_tile.move(nx, ny)
+        ft = self._float_tile
+        center_local = ft.pos() + QPoint(ft.width() // 2, ft.height() // 2)
+        self._float_pointer_global = self._metrics_wrap.mapToGlobal(center_local)
+        self._try_live_swap()
+
+    def _try_live_swap(self) -> None:
         if self._float_tile is None:
             return
-        from_key = self._float_tile.field_key
-        self._float_tile.set_floating(False)
+        target, ratio = self._best_overlap_target()
+        drag_key = self._float_tile.field_key
+
+        if target is None or ratio < HIGHLIGHT_OVERLAP_THRESHOLD:
+            self._clear_drop_highlights()
+            return
+
+        if ratio < SWAP_OVERLAP_THRESHOLD:
+            self._clear_drop_highlights()
+            target.set_drop_target(True)
+            return
+
+        ordered = load_ordered_metric_keys()
+        visible = [k for k in ordered if k in self._metric_tiles]
+        if drag_key not in visible or target.field_key not in visible:
+            return
+        if visible.index(drag_key) == visible.index(target.field_key):
+            self._clear_drop_highlights()
+            target.set_drop_target(True)
+            return
+
+        self._clear_drop_highlights()
+        target.set_drop_target(True)
+        reorder_field(drag_key, target.field_key)
+        self._relayout_grid_positions(animated=True)
+        if self._float_tile is not None:
+            self._float_tile.raise_()
+            self._float_tile.move(self._float_target_pos)
+
+    def _on_tile_float_end(self, global_pos: QPoint) -> None:
+        self._float_smooth_timer.stop()
+        self._clear_drop_highlights()
+        if self._float_tile is None:
+            return
+        drag_key = self._float_tile.field_key
+        target, ratio = self._best_overlap_target()
+        if (
+            target is not None
+            and ratio >= SWAP_OVERLAP_THRESHOLD
+            and target.field_key != drag_key
+        ):
+            ordered = load_ordered_metric_keys()
+            visible = [k for k in ordered if k in self._metric_tiles]
+            if drag_key in visible and target.field_key in visible:
+                if visible.index(drag_key) != visible.index(target.field_key):
+                    reorder_field(drag_key, target.field_key)
+        floating = self._float_tile
+        floating.clear_width_lock()
+        floating.set_floating(False)
         self._float_tile = None
-        target = self._tile_at_global(global_pos)
-        if target is not None and target.field_key != from_key:
-            reorder_field(from_key, target.field_key)
-        self._relayout_grid_positions()
+        self._relayout_grid_positions(animated=True)
         if self._settings_dialog is not None:
             self._settings_dialog.refresh_list()
 
     def _cancel_float_drag(self) -> None:
+        self._float_smooth_timer.stop()
+        self._clear_drop_highlights()
         if self._float_tile is None:
             return
-        self._float_tile.set_floating(False)
+        floating = self._float_tile
+        floating.clear_width_lock()
+        floating.set_floating(False)
         self._float_tile = None
-        self._relayout_grid_positions()
+        self._relayout_grid_positions(animated=False)
 
-    def _on_tile_prefs_changed(self, _key: str) -> None:
-        self._relayout_grid_positions()
+    def _on_tile_prefs_changed(self, key: str) -> None:
+        tile = self._metric_tiles.get(key)
+        animated = tile is None or not tile.is_resizing()
+        self._relayout_grid_positions(animated=animated)
 
     def _push_history(self, snapshot: StatusSnapshot) -> None:
         for key in self._metric_tiles:

@@ -8,7 +8,7 @@ from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
-SPARKLINE_COLOR = QColor(255, 255, 255, 180)
+SPARKLINE_COLOR = QColor(255, 255, 255, 200)
 SPARKLINE_HEIGHT = 36
 
 
@@ -38,7 +38,6 @@ class SparklineWidget(QWidget):
 
     def set_data(self, data: Sequence[float]) -> None:
         self._data = list(data)
-        self.setVisible(len(self._data) >= 2)
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -47,9 +46,9 @@ class SparklineWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        margin = 6
-        w = self.width() - margin * 2
-        h = self.height() - margin * 2
+        margin = 4
+        w = max(1, self.width() - margin * 2)
+        h = max(1, self.height() - margin * 2)
 
         vals = _smooth(self._data)
         lo = min(vals)
@@ -74,7 +73,8 @@ class SparklineWidget(QWidget):
             cx = (prev.x() + curr.x()) / 2.0
             path.cubicTo(cx, prev.y(), cx, curr.y(), curr.x(), curr.y())
 
-        pen = QPen(SPARKLINE_COLOR, 1.8, Qt.PenStyle.SolidLine)
+        stroke = max(1.2, min(2.2, self.height() / 22.0))
+        pen = QPen(SPARKLINE_COLOR, stroke, Qt.PenStyle.SolidLine)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)

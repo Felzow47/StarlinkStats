@@ -74,6 +74,11 @@ def save_widget_preferences(visible: Set[str], order: List[str]) -> None:
     settings.sync()
 
 
+def reset_widget_preferences() -> None:
+    """Remet visibilité et ordre des champs aux valeurs par défaut."""
+    save_widget_preferences(set(DEFAULT_VISIBLE_KEYS), list(DEFAULT_FIELD_ORDER))
+
+
 def reorder_field(from_key: str, to_key: str) -> List[str]:
     """Place from_key à la position de to_key dans l'ordre global."""
     order = load_field_order()

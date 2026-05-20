@@ -98,3 +98,10 @@ def _save_all(all_prefs: Dict[str, CardPrefs]) -> None:
 
 def col_span(prefs: CardPrefs) -> int:
     return prefs.col_span
+
+
+def reset_card_prefs() -> None:
+    """Supprime les préférences carte sauvegardées (retour aux défauts par champ)."""
+    settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
+    settings.remove(CARD_PREFS_KEY)
+    settings.sync()

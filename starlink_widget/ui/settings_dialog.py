@@ -7,16 +7,21 @@ from PyQt6.QtGui import QDrag, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
+    QPushButton,
     QVBoxLayout,
 )
 
+from starlink_widget.core.card_prefs import reset_card_prefs
 from starlink_widget.core.display_fields import FIELD_BY_KEY, fields_by_category
 from starlink_widget.core.widget_prefs import (
     load_field_order,
     load_visible_fields,
+    reset_widget_preferences,
     save_widget_preferences,
 )
 
@@ -61,8 +66,8 @@ class SettingsDialog(QDialog):
 
         hint = QLabel(
             "Cochez les champs à afficher. Glissez les lignes pour l'ordre.\n"
-            "Avec ce menu ouvert : poignées sur les cartes (taille/largeur),\n"
-            "glissez une carte pour la déplacer. Clic droit : graphique. Immédiat."
+            "Avec ce menu ouvert : poignée coin bas-droit (hauteur/largeur carte),\n"
+            "glissez une carte pour la déplacer. Clic droit : taille de carte. Immédiat."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #8e8e93; font-size: 11px;")
@@ -72,6 +77,13 @@ class SettingsDialog(QDialog):
         self._list.itemChanged.connect(self._on_item_changed)
         self._list.order_changed.connect(self._persist_and_notify)
         root.addWidget(self._list)
+
+        actions = QHBoxLayout()
+        self._reset_btn = QPushButton("Réinitialiser la disposition…")
+        self._reset_btn.clicked.connect(self._reset_layout)
+        actions.addWidget(self._reset_btn)
+        actions.addStretch()
+        root.addLayout(actions)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.close)
@@ -112,6 +124,22 @@ class SettingsDialog(QDialog):
         if self._block_persist:
             return
         self._persist_and_notify()
+
+    def _reset_layout(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Réinitialiser la disposition",
+            "Remettre les champs visibles, l'ordre et les tailles des cartes "
+            "aux valeurs par défaut ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        reset_widget_preferences()
+        reset_card_prefs()
+        self._populate_list()
+        self.preferences_changed.emit()
 
     def _persist_and_notify(self) -> None:
         if self._block_persist:

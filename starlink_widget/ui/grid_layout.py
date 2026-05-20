@@ -20,6 +20,8 @@ def place_metric_tiles(
             col = 0
             span = min(col_span(prefs), cols)
         layout.addWidget(widget, row, col, 1, span)
+        if hasattr(widget, "clear_width_lock"):
+            widget.clear_width_lock()
         col += span
         if col >= cols:
             row += 1

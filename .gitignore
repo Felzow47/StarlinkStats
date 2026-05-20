@@ -5,3 +5,4 @@ config.json
 _grpc_tools/
 *.egg-info/
 .pytest_cache/
+*.log
