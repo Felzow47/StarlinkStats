@@ -1,0 +1,10 @@
+{
+  "starlink_host": "192.168.100.1",
+  "starlink_port": 9200,
+  "ping_target": "1.1.1.1",
+  "poll_interval_ms": 1000,
+  "starlink_gateway_prefixes": ["192.168.1."],
+  "starlink_wifi_ssids": [],
+  "starlink_require_dish_route": true,
+  "hide_after_ticks_off_network": 3
+}
