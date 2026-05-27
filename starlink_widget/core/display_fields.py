@@ -52,7 +52,7 @@ DISPLAY_FIELDS: List[DisplayField] = [
     # Débits & réseau
     DisplayField("downlink", "Débit descendant", "Débits", True),
     DisplayField("uplink", "Débit montant", "Débits", True),
-    DisplayField("pop_ping_latency", "Latence ping", "Débits", False),
+    DisplayField("pop_ping_latency", "Latence ping", "Débits", True),
     DisplayField("pop_ping_drop_rate", "Perte ping POP", "Débits", False),
     # Alignement
     DisplayField("azimuth_delta", "Écart azimut Δ", "Alignement", True),
@@ -152,6 +152,15 @@ GRAPHABLE_KEYS = frozenset(
 
 def supports_graph(key: str) -> bool:
     return key in GRAPHABLE_KEYS
+
+
+def graph_footer_label(key: str) -> str:
+    """Sous-titre du graphique (carte pleine largeur)."""
+    if key == "pop_ping_latency":
+        return "dernière minute"
+    if key == "pop_ping_drop_rate":
+        return "dernière minute"
+    return "dernière minute"
 
 
 def numeric_sample(snapshot: StatusSnapshot, key: str) -> Optional[float]:

@@ -506,8 +506,12 @@ class MainWindow(QWidget):
             if not supports_graph(key):
                 continue
             sample = numeric_sample(snapshot, key)
+            hist = self._history[key]
             if sample is not None:
-                self._history[key].append(sample)
+                hist.append(sample)
+            elif key == "pop_ping_latency" and hist:
+                # Ping parfois absent (perte) : prolonger la courbe pour le graphique
+                hist.append(hist[-1])
 
     def _open_settings(self) -> None:
         if self._settings_dialog is None:

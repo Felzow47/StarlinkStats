@@ -22,7 +22,7 @@ from starlink_widget.core.card_prefs import (
     CardPrefs,
     save_card_pref,
 )
-from starlink_widget.core.display_fields import supports_graph
+from starlink_widget.core.display_fields import graph_footer_label, supports_graph
 from starlink_widget.ui.animations import animate_height
 from starlink_widget.ui.sparkline import SparklineWidget
 from starlink_widget.ui.styles import (
@@ -304,6 +304,7 @@ class MetricTile(QWidget):
     def _update_footer_placement(self) -> None:
         show_graph = self._has_graph()
         wide = self._prefs.col_span >= 2
+        self.footer_wide.setText(graph_footer_label(self.field_key))
         self.footer_wide.setVisible(show_graph and wide)
         self.sparkline.setVisible(show_graph)
 

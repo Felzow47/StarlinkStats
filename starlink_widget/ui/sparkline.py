@@ -41,7 +41,7 @@ class SparklineWidget(QWidget):
         self.update()
 
     def paintEvent(self, event) -> None:
-        if len(self._data) < 2:
+        if len(self._data) < 1:
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -50,7 +50,7 @@ class SparklineWidget(QWidget):
         w = max(1, self.width() - margin * 2)
         h = max(1, self.height() - margin * 2)
 
-        vals = _smooth(self._data)
+        vals = _smooth(self._data) if len(self._data) >= 3 else list(self._data)
         lo = min(vals)
         hi = max(vals)
         span = hi - lo
@@ -60,10 +60,21 @@ class SparklineWidget(QWidget):
         n = len(vals)
         points: List[QPointF] = []
         for i, v in enumerate(vals):
-            x = margin + (i / (n - 1)) * w
+            x = margin + (i / max(n - 1, 1)) * w
             norm = (v - lo) / span
             y = margin + h * (1.0 - norm)
             points.append(QPointF(x, y))
+
+        stroke = max(1.2, min(2.2, self.height() / 22.0))
+        pen = QPen(SPARKLINE_COLOR, stroke, Qt.PenStyle.SolidLine)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+
+        if len(points) == 1:
+            y = points[0].y()
+            painter.drawLine(int(margin), int(y), int(margin + w), int(y))
+            return
 
         path = QPainterPath()
         path.moveTo(points[0])
@@ -72,10 +83,4 @@ class SparklineWidget(QWidget):
             curr = points[i]
             cx = (prev.x() + curr.x()) / 2.0
             path.cubicTo(cx, prev.y(), cx, curr.y(), curr.x(), curr.y())
-
-        stroke = max(1.2, min(2.2, self.height() / 22.0))
-        pen = QPen(SPARKLINE_COLOR, stroke, Qt.PenStyle.SolidLine)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
         painter.drawPath(path)
