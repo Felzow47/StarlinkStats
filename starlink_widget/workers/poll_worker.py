@@ -14,7 +14,7 @@ from starlink_widget.core.network_detect import (
     is_on_starlink_lan,
 )
 from starlink_widget.core.starlink_client import StarlinkClient
-from starlink_widget.core.state import collect_critical_alerts
+from starlink_widget.core.state import collect_critical_alerts, resolve_internet_ok
 
 
 class PollWorker(QThread):
@@ -54,7 +54,8 @@ class PollWorker(QThread):
                     setattr(snapshot, f.name, getattr(dish, f.name))
 
                 if dish.dish_reachable:
-                    snapshot.internet_ok = check_internet(self.config.ping_target)
+                    ping_ok = check_internet(self.config.ping_target)
+                    snapshot.internet_ok = resolve_internet_ok(snapshot, ping_ok)
                 else:
                     snapshot.internet_ok = False
 

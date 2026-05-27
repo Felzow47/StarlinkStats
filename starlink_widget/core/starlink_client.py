@@ -87,8 +87,8 @@ class StarlinkClient:
             if snapshot.pop_ping_drop_rate is not None:
                 snapshot.pop_ping_drop_rate *= 100.0
 
-            snapshot.currently_obstructed = bool(
-                status_dict.get("currently_obstructed")
+            snapshot.currently_obstructed = (
+                status_dict.get("currently_obstructed") is True
             )
             frac = status_dict.get("fraction_obstructed")
             snapshot.fraction_obstructed = float(frac) if frac else 0.0

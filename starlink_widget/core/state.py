@@ -39,6 +39,23 @@ def is_obstructed(snapshot: StatusSnapshot) -> bool:
     return snapshot.currently_obstructed is True
 
 
+def resolve_internet_ok(snapshot: StatusSnapshot, ping_ok: bool) -> bool:
+    """Internet OK si ping réussi ou si le terminal Starlink est connecté."""
+    if not snapshot.dish_reachable:
+        return False
+    if ping_ok:
+        return True
+
+    state = (snapshot.state or "").upper()
+    if state == "CONNECTED":
+        return True
+
+    if snapshot.pop_ping_latency_ms is not None:
+        return True
+
+    return False
+
+
 def collect_critical_alerts(snapshot: StatusSnapshot) -> List[str]:
     alerts: List[str] = []
     if is_obstructed(snapshot):
@@ -61,10 +78,15 @@ def evaluate_health(snapshot: StatusSnapshot) -> Tuple[HealthState, str]:
     if not snapshot.dish_reachable:
         return HealthState.RED, "ANTENNE HORS LIGNE"
 
+    critical = collect_critical_alerts(snapshot)
+
     if not snapshot.internet_ok:
+        if critical:
+            return HealthState.ORANGE, "EN LIGNE — " + ", ".join(critical)
+        if (snapshot.state or "").upper() == "CONNECTED":
+            return HealthState.GREEN, "EN LIGNE"
         return HealthState.ORANGE, "SANS INTERNET"
 
-    critical = collect_critical_alerts(snapshot)
     if critical:
         return HealthState.ORANGE, "EN LIGNE — " + ", ".join(critical)
 
