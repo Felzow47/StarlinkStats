@@ -88,3 +88,14 @@ def reorder_field(from_key: str, to_key: str) -> List[str]:
     order.insert(order.index(to_key), from_key)
     save_widget_preferences(load_visible_fields(), order)
     return order
+
+
+def swap_field_order(from_key: str, to_key: str) -> List[str]:
+    """Échange les positions de deux champs (drop carte sur carte)."""
+    order = load_field_order()
+    if from_key not in order or to_key not in order or from_key == to_key:
+        return order
+    i, j = order.index(from_key), order.index(to_key)
+    order[i], order[j] = order[j], order[i]
+    save_widget_preferences(load_visible_fields(), order)
+    return order

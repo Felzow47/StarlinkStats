@@ -39,8 +39,19 @@ SIZE_VALUE_FONT = {SIZE_SMALL: 15, SIZE_MEDIUM: 22, SIZE_LARGE: 26}
 SIZE_UNIT_FONT = {SIZE_SMALL: 10, SIZE_MEDIUM: 11, SIZE_LARGE: 12}
 GRIP_HIT = 44
 HEIGHT_GRID = 8
-MIN_PREVIEW_H = 56
 MAX_PREVIEW_H = 160
+GRAPH_HEIGHT_EXTRA = 12
+# Sous cette hauteur : texte seul (graphique masqué), prefs.graph inchangé
+GRAPH_VISIBLE_MIN_H = SIZE_HEIGHTS[SIZE_SMALL] + GRAPH_HEIGHT_EXTRA
+MIN_HEIGHT_TEXT_ONLY = SIZE_HEIGHTS[SIZE_SMALL]
+# Texte seul : plus petit que le preset S (graphique masqué)
+MIN_HEIGHT_COMPACT = 48
+# Cartes empilables dans une même colonne (texte seul, sans graphique)
+COMPACT_GRID_MAX_H = MIN_HEIGHT_TEXT_ONLY
+
+
+def _lerp_int(lo: int, hi: int, t: float) -> int:
+    return int(round(lo + (hi - lo) * max(0.0, min(1.0, t))))
 
 
 class ResizeGripOverlay(QWidget):
@@ -123,6 +134,7 @@ class MetricTile(QWidget):
         self.field_key = field_key
         self._prefs = prefs.normalized()
         self._saved_prefs = self._prefs
+        self._graph_user_wants = self._prefs.graph
         self._customize_mode = False
         self._press_global: QPoint | None = None
         self._press_offset = QPoint()
@@ -135,9 +147,9 @@ class MetricTile(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(14, 12, 14, 8)
-        root.setSpacing(4)
+        self._root_layout = QVBoxLayout(self)
+        self._root_layout.setContentsMargins(14, 12, 14, 8)
+        self._root_layout.setSpacing(4)
 
         self._header = QWidget()
         header_row = QHBoxLayout(self._header)
@@ -152,7 +164,7 @@ class MetricTile(QWidget):
             self.footer_wide,
             alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
         )
-        root.addWidget(self._header)
+        self._root_layout.addWidget(self._header)
 
         value_row = QHBoxLayout()
         value_row.setSpacing(4)
@@ -166,13 +178,13 @@ class MetricTile(QWidget):
             self.unit_label, alignment=Qt.AlignmentFlag.AlignBottom
         )
         value_row.addStretch()
-        root.addLayout(value_row)
+        self._root_layout.addLayout(value_row)
 
         self.sparkline = SparklineWidget()
         self.sparkline.setVisible(
             self._prefs.graph and supports_graph(field_key)
         )
-        root.addWidget(self.sparkline)
+        self._root_layout.addWidget(self.sparkline)
 
         self._grip = ResizeGripOverlay(self)
         self.clear_width_lock()
@@ -187,25 +199,55 @@ class MetricTile(QWidget):
     def is_resizing(self) -> bool:
         return self._drag_mode == "resize"
 
-    def _has_graph(self) -> bool:
-        return self._prefs.graph and supports_graph(self.field_key)
+    def _show_graph_for_height(self, height: int) -> bool:
+        """Graphique visible seulement si la hauteur le permet (sinon texte seul)."""
+        return (
+            self._graph_user_wants
+            and supports_graph(self.field_key)
+            and height >= GRAPH_VISIBLE_MIN_H
+        )
+
+    def _graph_pref_for_height(self, height: int) -> bool:
+        """Valeur graph à persister selon la hauteur (compact = masqué)."""
+        return self._show_graph_for_height(height)
 
     def _base_height(self, size: int | None = None) -> int:
         s = size if size is not None else self._saved_prefs.size
         h = SIZE_HEIGHTS.get(s, SIZE_MEDIUM)
         if self._saved_prefs.graph and supports_graph(self.field_key):
-            h += 12
+            h += GRAPH_HEIGHT_EXTRA
         return self._snap_height_to_grid(h)
+
+    def _min_allowed_height(self, height: int | None = None) -> int:
+        """Plancher : compact sans graphique, sinon hauteur avec graphique."""
+        h = self._preview_height if height is None else height
+        if self._show_graph_for_height(h):
+            return round(GRAPH_VISIBLE_MIN_H / HEIGHT_GRID) * HEIGHT_GRID
+        return round(MIN_HEIGHT_COMPACT / HEIGHT_GRID) * HEIGHT_GRID
 
     def _snap_height_to_grid(self, height: int) -> int:
         snapped = round(height / HEIGHT_GRID) * HEIGHT_GRID
-        return max(MIN_PREVIEW_H, min(MAX_PREVIEW_H, snapped))
+        return max(self._min_allowed_height(height), min(MAX_PREVIEW_H, snapped))
 
     def _height_for_size(self, size: int) -> int:
         h = SIZE_HEIGHTS.get(size, SIZE_MEDIUM)
         if self._saved_prefs.graph and supports_graph(self.field_key):
-            h += 12
+            h += GRAPH_HEIGHT_EXTRA
         return self._snap_height_to_grid(h)
+
+    def _candidate_heights(self) -> list[tuple[int, int]]:
+        """Hauteurs cibles (preset, px) pour le snap au relâchement."""
+        out: list[tuple[int, int]] = []
+        compact_h = round(MIN_HEIGHT_COMPACT / HEIGHT_GRID) * HEIGHT_GRID
+        out.append((SIZE_SMALL, compact_h))
+        for size, base in SIZE_HEIGHTS.items():
+            out.append((size, round(base / HEIGHT_GRID) * HEIGHT_GRID))
+            if self._graph_user_wants and supports_graph(self.field_key):
+                with_graph = base + GRAPH_HEIGHT_EXTRA
+                out.append(
+                    (size, round(with_graph / HEIGHT_GRID) * HEIGHT_GRID)
+                )
+        return out
 
     def set_customize_mode(self, enabled: bool) -> None:
         self._customize_mode = enabled
@@ -243,6 +285,7 @@ class MetricTile(QWidget):
     def set_prefs(self, prefs: CardPrefs) -> None:
         self._prefs = prefs.normalized()
         self._saved_prefs = self._prefs
+        self._graph_user_wants = self._prefs.graph
         self._preview_height = self._base_height()
         self._apply_dims(self._prefs.size, self._prefs.col_span, animate=False)
 
@@ -256,15 +299,14 @@ class MetricTile(QWidget):
             self.unit_label.setVisible(False)
 
     def set_sparkline_data(self, data: list[float]) -> None:
-        if self._prefs.graph:
+        if self._show_graph_for_height(self.height()):
             self.sparkline.set_data(data)
 
     def _snap_size_from_height(self, height: int) -> int:
         h = self._snap_height_to_grid(height)
         best = SIZE_MEDIUM
         best_dist = 10_000
-        for size, base_h in SIZE_HEIGHTS.items():
-            target = self._height_for_size(size)
+        for size, target in self._candidate_heights():
             dist = abs(h - target)
             if dist < best_dist:
                 best_dist = dist
@@ -282,11 +324,54 @@ class MetricTile(QWidget):
         start = self._height_for_size(self._saved_prefs.size)
         return self._snap_height_to_grid(start + int(dy * 0.55))
 
-    def _apply_typography(self) -> None:
-        size = self._saved_prefs.size
-        title_px = SIZE_TITLE_FONT.get(size, 10)
-        value_px = SIZE_VALUE_FONT.get(size, 22)
-        unit_px = SIZE_UNIT_FONT.get(size, 11)
+    def is_grid_compact(self) -> bool:
+        """Carte assez petite pour s'empiler avec une autre dans la même colonne."""
+        if self._prefs.col_span >= 2:
+            return False
+        h = self._preview_height
+        return h <= COMPACT_GRID_MAX_H and not self._show_graph_for_height(h)
+
+    def _typography_height_range(self) -> tuple[int, int]:
+        """Bornes hauteur pour l'interpolation des polices (carte avec graphique)."""
+        h_min = MIN_HEIGHT_TEXT_ONLY
+        h_max = SIZE_HEIGHTS[SIZE_LARGE]
+        if self._graph_user_wants and supports_graph(self.field_key):
+            h_max += GRAPH_HEIGHT_EXTRA
+        return h_min, max(h_min + 1, h_max)
+
+    def _typography_scale(self, height: int) -> float:
+        h_min, h_max = self._typography_height_range()
+        return (height - h_min) / (h_max - h_min)
+
+    def _apply_typography(self, height: int | None = None) -> None:
+        h = self._preview_height if height is None else height
+        if not self._show_graph_for_height(h):
+            # Texte seul : polices lisibles, légère variation selon la hauteur
+            t_c = (h - MIN_HEIGHT_COMPACT) / max(
+                1, MIN_HEIGHT_TEXT_ONLY - MIN_HEIGHT_COMPACT
+            )
+            title_px = _lerp_int(
+                SIZE_TITLE_FONT[SIZE_SMALL], SIZE_TITLE_FONT[SIZE_MEDIUM], t_c
+            )
+            value_px = _lerp_int(
+                SIZE_VALUE_FONT[SIZE_SMALL], SIZE_VALUE_FONT[SIZE_MEDIUM], t_c
+            )
+            unit_px = _lerp_int(
+                SIZE_UNIT_FONT[SIZE_SMALL], SIZE_UNIT_FONT[SIZE_MEDIUM], t_c
+            )
+            footer_px = 8
+        else:
+            t = self._typography_scale(h)
+            title_px = _lerp_int(
+                SIZE_TITLE_FONT[SIZE_SMALL], SIZE_TITLE_FONT[SIZE_LARGE], t
+            )
+            value_px = _lerp_int(
+                SIZE_VALUE_FONT[SIZE_SMALL], SIZE_VALUE_FONT[SIZE_LARGE], t
+            )
+            unit_px = _lerp_int(
+                SIZE_UNIT_FONT[SIZE_SMALL], SIZE_UNIT_FONT[SIZE_LARGE], t
+            )
+            footer_px = _lerp_int(8, 9, t)
 
         self.title_label.setStyleSheet(
             f"color: {TEXT_SECONDARY}; font-size: {title_px}px; font-weight: 500;"
@@ -298,15 +383,29 @@ class MetricTile(QWidget):
             f"color: {TEXT_SECONDARY}; font-size: {unit_px}px; font-weight: 500;"
         )
         self.footer_wide.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: 9px; font-weight: 400;"
+            f"color: {TEXT_SECONDARY}; font-size: {footer_px}px; font-weight: 400;"
         )
 
     def _update_footer_placement(self) -> None:
-        show_graph = self._has_graph()
+        show_graph = self._show_graph_for_height(self._preview_height)
         wide = self._prefs.col_span >= 2
         self.footer_wide.setText(graph_footer_label(self.field_key))
         self.footer_wide.setVisible(show_graph and wide)
         self.sparkline.setVisible(show_graph)
+        if show_graph:
+            self.sparkline.setMaximumHeight(QWIDGETSIZE_MAX)
+        else:
+            self.sparkline.setMaximumHeight(0)
+
+    def _apply_compact_layout(self, height: int) -> None:
+        """Marges réduites en mode texte seul très compact."""
+        compact = not self._show_graph_for_height(height)
+        if compact and height < MIN_HEIGHT_TEXT_ONLY:
+            self._root_layout.setContentsMargins(10, 6, 10, 4)
+            self._root_layout.setSpacing(2)
+        else:
+            self._root_layout.setContentsMargins(14, 12, 14, 8)
+            self._root_layout.setSpacing(4)
 
     def _apply_dims(
         self, size: int, col_span: int, *, animate: bool, height: int | None = None
@@ -318,7 +417,8 @@ class MetricTile(QWidget):
         )
         self._preview_height = h
         self._update_footer_placement()
-        self._apply_typography()
+        self._apply_compact_layout(h)
+        self._apply_typography(h)
 
         if animate and self.height() != h:
             animate_height(self, h, self.parentWidget())
@@ -350,12 +450,14 @@ class MetricTile(QWidget):
     def _save_graph(self, enabled: bool) -> None:
         if not supports_graph(self.field_key):
             return
+        self._graph_user_wants = enabled
+        h = max(self._preview_height, GRAPH_VISIBLE_MIN_H) if enabled else self._preview_height
         self._prefs = CardPrefs(
             self._saved_prefs.size, enabled, self._saved_prefs.col_span
         ).normalized()
         self._saved_prefs = self._prefs
         save_card_pref(self.field_key, self._prefs)
-        self._apply_dims(self._prefs.size, self._prefs.col_span, animate=True)
+        self._apply_dims(self._prefs.size, self._prefs.col_span, animate=True, height=h)
 
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
@@ -408,9 +510,9 @@ class MetricTile(QWidget):
             span_changed = span != self._prefs.col_span
             if height_changed:
                 self._preview_height = h
-                self.setMinimumHeight(h)
-                self.setMaximumHeight(h)
-            if span_changed:
+                size = self._snap_size_from_height(h)
+                self._apply_dims(size, span, animate=False, height=h)
+            elif span_changed:
                 size = self._snap_size_from_height(h)
                 self._apply_dims(size, span, animate=False, height=h)
                 self.layout_preview.emit(self.field_key)
@@ -439,13 +541,18 @@ class MetricTile(QWidget):
             h = self._preview_height_from_delta(delta.y())
             size = self._snap_size_from_height(h)
             span = self._span_from_delta(delta.x())
-            final_h = self._height_for_size(size)
-            changed = (
-                size != self._saved_prefs.size
-                or span != self._saved_prefs.col_span
-            )
-            self._saved_prefs = CardPrefs(size, self._prefs.graph, span).normalized()
+            final_h = h
+            prev = self._saved_prefs
+            graph_save = self._graph_pref_for_height(final_h)
+            self._saved_prefs = CardPrefs(size, graph_save, span).normalized()
+            self._prefs = self._saved_prefs
             self._apply_dims(size, span, animate=True, height=final_h)
+            changed = (
+                size != prev.size
+                or span != prev.col_span
+                or graph_save != prev.graph
+                or final_h != self._base_height(prev.size)
+            )
             if changed:
                 save_card_pref(self.field_key, self._prefs)
                 self.prefs_changed.emit(self.field_key)

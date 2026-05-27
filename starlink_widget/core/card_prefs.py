@@ -36,6 +36,7 @@ DEFAULT_CARD_PREFS: Dict[str, CardPrefs] = {
     "downlink": CardPrefs(SIZE_MEDIUM, True, 1),
     "uplink": CardPrefs(SIZE_MEDIUM, True, 1),
     "pop_ping_latency": CardPrefs(SIZE_MEDIUM, True, 1),
+    "pop_ping_drop_rate": CardPrefs(SIZE_MEDIUM, True, 1),
 }
 
 

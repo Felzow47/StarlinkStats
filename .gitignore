@@ -6,3 +6,4 @@ _grpc_tools/
 *.egg-info/
 .pytest_cache/
 *.log
+*.log

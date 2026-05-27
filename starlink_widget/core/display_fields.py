@@ -53,7 +53,7 @@ DISPLAY_FIELDS: List[DisplayField] = [
     DisplayField("downlink", "Débit descendant", "Débits", True),
     DisplayField("uplink", "Débit montant", "Débits", True),
     DisplayField("pop_ping_latency", "Latence ping", "Débits", True),
-    DisplayField("pop_ping_drop_rate", "Perte ping POP", "Débits", False),
+    DisplayField("pop_ping_drop_rate", "Perte ping", "Débits", False),
     # Alignement
     DisplayField("azimuth_delta", "Écart azimut Δ", "Alignement", True),
     DisplayField("boresight_azimuth", "Azimut actuel", "Alignement", False),
@@ -61,7 +61,7 @@ DISPLAY_FIELDS: List[DisplayField] = [
     DisplayField("desired_azimuth", "Azimut cible", "Alignement", False),
     DisplayField("desired_elevation", "Élévation cible", "Alignement", False),
     # Alertes (diagnostic JSON)
-    DisplayField("obstructed", "Obstructed", "Alertes", False),
+    DisplayField("obstructed", "Obstrué", "Alertes", False),
     DisplayField("dish_is_heating", "Chauffage antenne", "Alertes", False),
     DisplayField("dish_thermal_throttle", "Throttle thermique", "Alertes", False),
     DisplayField("dish_thermal_shutdown", "Arrêt thermique", "Alertes", False),

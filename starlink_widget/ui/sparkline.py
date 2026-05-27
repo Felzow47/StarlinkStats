@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QSizePolicy, QWidget
 
 SPARKLINE_COLOR = QColor(255, 255, 255, 200)
 SPARKLINE_HEIGHT = 36
+EDGE_PAD = 0.08
 
 
 def _smooth(values: List[float], passes: int = 2) -> List[float]:
@@ -40,6 +41,24 @@ class SparklineWidget(QWidget):
         self._data = list(data)
         self.update()
 
+    def _chart_range(self, vals: List[float]) -> tuple[float, float, bool]:
+        lo = min(vals)
+        hi = max(vals)
+        if hi - lo < 1e-9:
+            return lo, lo + 1.0, True
+        pad = (hi - lo) * 0.15
+        return lo - pad, hi + pad, False
+
+    def _norm_y(
+        self, v: float, lo: float, hi: float, h: float, margin: float, *, flat: bool
+    ) -> float:
+        if flat:
+            return margin + h * 0.5
+        span = max(hi - lo, 1e-9)
+        norm = (v - lo) / span
+        norm = EDGE_PAD + norm * (1.0 - 2.0 * EDGE_PAD)
+        return margin + h * (1.0 - norm)
+
     def paintEvent(self, event) -> None:
         if len(self._data) < 1:
             return
@@ -51,21 +70,16 @@ class SparklineWidget(QWidget):
         h = max(1, self.height() - margin * 2)
 
         vals = _smooth(self._data) if len(self._data) >= 3 else list(self._data)
-        lo = min(vals)
-        hi = max(vals)
-        span = hi - lo
-        if span < 1e-9:
-            span = 1.0
+        lo, hi, flat = self._chart_range(vals)
 
         n = len(vals)
         points: List[QPointF] = []
         for i, v in enumerate(vals):
             x = margin + (i / max(n - 1, 1)) * w
-            norm = (v - lo) / span
-            y = margin + h * (1.0 - norm)
+            y = self._norm_y(v, lo, hi, h, margin, flat=flat)
             points.append(QPointF(x, y))
 
-        stroke = max(1.2, min(2.2, self.height() / 22.0))
+        stroke = max(1.4, min(2.4, self.height() / 18.0))
         pen = QPen(SPARKLINE_COLOR, stroke, Qt.PenStyle.SolidLine)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
