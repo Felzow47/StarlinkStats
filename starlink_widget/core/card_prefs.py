@@ -27,14 +27,18 @@ class CardPrefs:
     col_span: int = 1  # 1 = demi-largeur, 2 = pleine largeur (2 colonnes)
     height_px: int = 0  # 0 = hauteur dérivée du preset size
     grid_col: int = -1  # 0/1 = colonne fixe ; -1 = auto au prochain layout
+    x: int = 0
+    y: int = 0
+    width_px: int = 0  # 0 = largeur dérivée du col_span
 
     def normalized(self) -> "CardPrefs":
         size = max(SIZE_SMALL, min(SIZE_LARGE, self.size))
         span = 2 if self.col_span >= 2 else 1
         graph = self.graph
-        height_px = max(0, min(200, int(self.height_px)))
+        height_px = max(0, min(500, int(self.height_px)))
+        width_px = max(0, int(self.width_px))
         grid_col = self.grid_col if self.grid_col in (0, 1) else -1
-        return CardPrefs(size, graph, span, height_px, grid_col)
+        return CardPrefs(size, graph, span, height_px, grid_col, self.x, self.y, width_px)
 
 
 DEFAULT_CARD_PREFS: Dict[str, CardPrefs] = {
@@ -71,7 +75,10 @@ def load_card_prefs() -> Dict[str, CardPrefs]:
                 span = int(cfg.get("col_span", 1))
                 height_px = int(cfg.get("height_px", 0))
                 grid_col = int(cfg.get("grid_col", -1))
-                prefs = CardPrefs(size, graph, span, height_px, grid_col).normalized()
+                x = int(cfg.get("x", 0))
+                y = int(cfg.get("y", 0))
+                width_px = int(cfg.get("width_px", 0))
+                prefs = CardPrefs(size, graph, span, height_px, grid_col, x, y, width_px).normalized()
                 if prefs.graph and not supports_graph(key):
                     prefs = CardPrefs(
                         prefs.size,
@@ -79,6 +86,9 @@ def load_card_prefs() -> Dict[str, CardPrefs]:
                         prefs.col_span,
                         prefs.height_px,
                         prefs.grid_col,
+                        prefs.x,
+                        prefs.y,
+                        prefs.width_px,
                     )
                 result[key] = prefs
         except (json.JSONDecodeError, TypeError, ValueError):
@@ -99,7 +109,7 @@ def save_card_pref(key: str, prefs: CardPrefs) -> None:
     prefs = prefs.normalized()
     if prefs.graph and not supports_graph(key):
         prefs = CardPrefs(
-            prefs.size, False, prefs.col_span, prefs.height_px, prefs.grid_col
+            prefs.size, False, prefs.col_span, prefs.height_px, prefs.grid_col, prefs.x, prefs.y, prefs.width_px
         )
     all_prefs = load_card_prefs()
     all_prefs[key] = prefs
@@ -114,6 +124,9 @@ def _save_all(all_prefs: Dict[str, CardPrefs]) -> None:
             "col_span": v.col_span,
             "height_px": v.height_px,
             "grid_col": v.grid_col,
+            "x": v.x,
+            "y": v.y,
+            "width_px": v.width_px,
         }
         for k, v in all_prefs.items()
     }

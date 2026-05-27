@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
+from PyQt6.QtGui import QMouseEvent  # noqa: F401 – utilisé dans les signatures
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -54,67 +55,93 @@ def _lerp_int(lo: int, hi: int, t: float) -> int:
     return int(round(lo + (hi - lo) * max(0.0, min(1.0, t))))
 
 
-class ResizeGripOverlay(QWidget):
-    """Poignée coin bas-droit — curseur resize au survol."""
+# Taille de la zone cliquable (en px) pour chaque poignée de bord
+GRIP_THICKNESS = 8
+GRIP_MIN_W = 100
+GRIP_MIN_H = 56
 
-    def __init__(self, tile: "MetricTile") -> None:
+
+class EdgeHandle(QWidget):
+    """Poignée invisible sur un bord du tile — curseur + détection click."""
+
+    EDGES = ("top", "bottom", "left", "right")
+    CURSORS = {
+        "top": Qt.CursorShape.SizeVerCursor,
+        "bottom": Qt.CursorShape.SizeVerCursor,
+        "left": Qt.CursorShape.SizeHorCursor,
+        "right": Qt.CursorShape.SizeHorCursor,
+    }
+
+    def __init__(self, tile: "MetricTile", edge: str) -> None:
         super().__init__(tile)
         self._tile = tile
+        self._edge = edge
         self._hover = False
-        self.setFixedSize(GRIP_HIT, GRIP_HIT)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
-        self.setToolTip("Redimensionner la carte")
+        self.setCursor(self.CURSORS[edge])
+        self.setMouseTracking(True)
         self.hide()
 
-    def _sync_visible(self) -> None:
+    def sync_geometry(self) -> None:
+        """Place la poignée sur le bon bord du tile parent."""
+        t = GRIP_THICKNESS
+        w, h = self._tile.width(), self._tile.height()
+        if self._edge == "top":
+            self.setGeometry(t, 0, w - 2 * t, t)
+        elif self._edge == "bottom":
+            self.setGeometry(t, h - t, w - 2 * t, t)
+        elif self._edge == "left":
+            self.setGeometry(0, t, t, h - 2 * t)
+        elif self._edge == "right":
+            self.setGeometry(w - t, t, t, h - 2 * t)
+        self.raise_()
+
+    def sync_visible(self) -> None:
         show = self._tile._customize_mode and not self._tile._floating
         self.setVisible(show)
         if show:
-            self.raise_()
+            self.sync_geometry()
 
     def enterEvent(self, event) -> None:
         self._hover = True
-        self.update()
+        self._tile.update()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
         self._hover = False
-        self.update()
+        self._tile.update()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
-        self._tile._start_resize_drag(event.globalPosition().toPoint())
+        self._tile._start_resize_drag(event.globalPosition().toPoint(), self._edge)
         event.accept()
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        active = self._tile._drag_mode == f"resize_{self._edge}"
         w, h = self.width(), self.height()
-        active = self._hover or self._tile._drag_mode == "resize"
 
+        # 3 niveaux : drag actif > survol > visible au repos
         if active:
-            glow = QLinearGradient(0, h, w, 0)
-            glow.setColorAt(0.0, QColor(90, 160, 255, 0))
-            glow.setColorAt(1.0, QColor(90, 160, 255, 42))
-            painter.fillRect(self.rect(), glow)
+            alpha = 220
+        elif self._hover:
+            alpha = 160
+        else:
+            alpha = 60  # toujours visible en mode personnaliser
 
-        alpha = 210 if active else 115
-        pen = QPen(QColor(255, 255, 255, alpha), 2.0 if active else 1.5)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-
-        inset = 9
-        gap = 5
-        for i in range(3):
-            d = inset + i * gap
-            painter.drawLine(
-                QPointF(w - d, h - inset),
-                QPointF(w - inset, h - d),
-            )
+        color = QColor(100, 180, 255, alpha)
+        if self._edge in ("top", "bottom"):
+            bar_h = 3 if (active or self._hover) else 2
+            y_bar = (h - bar_h) // 2
+            painter.fillRect(8, y_bar, w - 16, bar_h, color)
+        else:
+            bar_w = 3 if (active or self._hover) else 2
+            x_bar = (w - bar_w) // 2
+            painter.fillRect(x_bar, 8, bar_w, h - 16, color)
 
 
 class MetricTile(QWidget):
@@ -137,11 +164,14 @@ class MetricTile(QWidget):
         self._graph_user_wants = self._prefs.graph
         self._customize_mode = False
         self._press_global: QPoint | None = None
-        self._press_offset = QPoint()
-        self._drag_mode: str | None = None
+        self._drag_mode: str | None = None  # "move" | "resize_top" | "resize_bottom" | "resize_left" | "resize_right"
         self._floating = False
         self._drop_target = False
         self._preview_height = self._base_height()
+        # Dimensions au début du resize
+        self._resize_start_geo: QRect = QRect()
+        # Position au début du move
+        self._drag_start_pos: QPoint = QPoint()
         self.setObjectName("metricTile")
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -186,18 +216,20 @@ class MetricTile(QWidget):
         )
         self._root_layout.addWidget(self.sparkline)
 
-        self._grip = ResizeGripOverlay(self)
+        # 4 poignées de redimensionnement
+        self._handles = {e: EdgeHandle(self, e) for e in EdgeHandle.EDGES}
+
         self.clear_width_lock()
         self._apply_dims(self._prefs.size, self._prefs.col_span, animate=False)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        s = self._grip.width()
-        self._grip.move(max(0, self.width() - s), max(0, self.height() - s))
-        self._grip.raise_()
+        for h in self._handles.values():
+            if h.isVisible():
+                h.sync_geometry()
 
     def is_resizing(self) -> bool:
-        return self._drag_mode == "resize"
+        return self._drag_mode is not None and self._drag_mode.startswith("resize_")
 
     def _show_graph_for_height(self, height: int) -> bool:
         """Graphique visible seulement si la hauteur le permet (sinon texte seul)."""
@@ -257,18 +289,18 @@ class MetricTile(QWidget):
     def set_customize_mode(self, enabled: bool) -> None:
         self._customize_mode = enabled
         if enabled:
-            self.setToolTip(
-                "Glisser pour échanger · coin bas-droit pour redimensionner"
-            )
+            self.setToolTip("Glisser pour déplacer · bords pour redimensionner")
         else:
             self._cancel_drag()
             self.setToolTip("")
-        self._grip._sync_visible()
+        for h in self._handles.values():
+            h.sync_visible()
 
     def set_floating(self, floating: bool) -> None:
         self._floating = floating
         self.setProperty("floating", floating)
-        self._grip._sync_visible()
+        for h in self._handles.values():
+            h.sync_visible()
         self.update()
 
     def set_drop_target(self, active: bool) -> None:
@@ -496,10 +528,11 @@ class MetricTile(QWidget):
             self.setMinimumHeight(h)
             self.setMaximumHeight(h)
 
-    def _start_resize_drag(self, global_pos: QPoint) -> None:
+    def _start_resize_drag(self, global_pos: QPoint, edge: str) -> None:
+        """Démarre un resize sur le bord donné ; mémorise la géométrie initiale."""
         self._press_global = global_pos
-        self._drag_mode = "resize"
-        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self._drag_mode = f"resize_{edge}"
+        self._resize_start_geo = self.geometry()
         self.grabMouse()
 
     def _cancel_drag(self) -> None:
@@ -510,12 +543,12 @@ class MetricTile(QWidget):
         self.set_drag_highlight(False)
         self.set_drop_target(False)
         self.unsetCursor()
-        self._apply_dims(
-            self._saved_prefs.size,
-            self._saved_prefs.col_span,
-            animate=True,
-            height=self._base_height(),
-        )
+        if self.is_resizing():
+            # Restaure les dimensions d'avant resize
+            geo = self._resize_start_geo
+            if geo.isValid():
+                self.setFixedSize(geo.width(), geo.height())
+                self.move(geo.topLeft())
 
     def _save_graph(self, enabled: bool) -> None:
         if not supports_graph(self.field_key):
@@ -558,84 +591,182 @@ class MetricTile(QWidget):
         self.setProperty("dragHighlight", active)
         self.update()
 
-    def mousePressEvent(self, event) -> None:
+    # ------------------------------------------------------------------
+    # Resize helpers
+    # ------------------------------------------------------------------
+
+    def _edge_at(self, local_pos) -> str | None:
+        """Retourne le nom du bord ('top','bottom','left','right') si on est dans la zone de poignée, sinon None."""
+        if not self._customize_mode:
+            return None
+        t = GRIP_THICKNESS * 2  # zone de détection un peu plus large côté centre
+        x, y = local_pos.x(), local_pos.y()
+        w, h = self.width(), self.height()
+        if y <= t:
+            return "top"
+        if y >= h - t:
+            return "bottom"
+        if x <= t:
+            return "left"
+        if x >= w - t:
+            return "right"
+        return None
+
+    def _update_cursor(self, local_pos) -> None:
+        """Met à jour le curseur selon la zone survolée (mode personnaliser seulement)."""
+        if not self._customize_mode:
+            self.unsetCursor()
+            return
+        edge = self._edge_at(local_pos)
+        if edge in ("top", "bottom"):
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
+        elif edge in ("left", "right"):
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        else:
+            self.unsetCursor()
+
+    def _perform_resize(self, delta: QPoint, edge: str) -> None:
+        """Applique le resize en live sur le bon bord, sans bouger la position opposée."""
+        geo = self._resize_start_geo
+        parent = self.parentWidget()
+
+        if edge == "bottom":
+            new_h = max(GRIP_MIN_H, geo.height() + delta.y())
+            new_h = round(new_h / HEIGHT_GRID) * HEIGHT_GRID
+        elif edge == "top":
+            new_h = max(GRIP_MIN_H, geo.height() - delta.y())
+            new_h = round(new_h / HEIGHT_GRID) * HEIGHT_GRID
+            new_y = geo.bottom() + 1 - new_h
+            self.move(self.x(), max(0, new_y))
+        elif edge == "right":
+            max_w = (parent.width() - geo.x()) if parent else 9999
+            new_w = max(GRIP_MIN_W, min(max_w, geo.width() + delta.x()))
+            new_w = round(new_w / 4) * 4
+            self.setFixedWidth(new_w)
+            for h in self._handles.values():
+                h.sync_geometry()
+            return
+        elif edge == "left":
+            new_w = max(GRIP_MIN_W, geo.width() - delta.x())
+            new_w = round(new_w / 4) * 4
+            new_x = geo.right() + 1 - new_w
+            if parent:
+                new_x = max(0, new_x)
+                new_w = geo.right() + 1 - new_x
+            self.setFixedWidth(new_w)
+            self.move(new_x, self.y())
+            for h in self._handles.values():
+                h.sync_geometry()
+            return
+        else:
+            return
+
+        # Hauteur
+        if edge in ("top", "bottom"):
+            self._preview_height = new_h
+            self._update_footer_placement()
+            self._apply_compact_layout(new_h)
+            self._apply_typography(new_h)
+            self.setFixedHeight(new_h)
+            for h in self._handles.values():
+                h.sync_geometry()
+
+    def _finish_resize(self) -> None:
+        """Persiste les nouvelles dimensions après un resize."""
+        final_w = self.width()
+        final_h = self.height()
+        final_x = self.x()
+        final_y = self.y()
+        graph_save = self._graph_pref_for_height(final_h)
+        size = self._snap_size_from_height(final_h)
+        parent = self.parentWidget()
+        total_w = parent.width() if parent else final_w * 2
+        span = 2 if final_w >= total_w * 0.75 else 1
+        self._saved_prefs = CardPrefs(
+            size, graph_save, span,
+            height_px=final_h, grid_col=self._saved_prefs.grid_col,
+            x=final_x, y=final_y, width_px=final_w,
+        ).normalized()
+        self._prefs = self._saved_prefs
+        self._preview_height = final_h
+        save_card_pref(self.field_key, self._prefs)
+        self.prefs_changed.emit(self.field_key)
+
+    def _finish_move(self) -> None:
+        """Snap to grid + anti-collision + persistance après un move."""
+        if not self._floating:
+            return
+        GRID_SIZE = 20
+        new_x = round(self.x() / GRID_SIZE) * GRID_SIZE
+        new_y = round(self.y() / GRID_SIZE) * GRID_SIZE
+
+        parent = self.parentWidget()
+        if parent:
+            max_x = max(0, parent.width() - self.width())
+            new_x = max(0, min(new_x, max_x))
+            new_y = max(0, new_y)
+
+            my_rect = QRect(new_x, new_y, self.width(), self.height())
+            collision = False
+            for child in parent.children():
+                if isinstance(child, type(self)) and child is not self and child.isVisible():
+                    if child.geometry().intersects(my_rect.adjusted(2, 2, -2, -2)):
+                        collision = True
+                        break
+            if collision:
+                new_x = self._prefs.x
+                new_y = self._prefs.y
+
+        self.move(new_x, new_y)
+        self._saved_prefs = CardPrefs(
+            self._prefs.size, self._prefs.graph, self._prefs.col_span,
+            height_px=self._prefs.height_px, grid_col=self._prefs.grid_col,
+            x=new_x, y=new_y, width_px=self._prefs.width_px,
+        ).normalized()
+        self._prefs = self._saved_prefs
+        save_card_pref(self.field_key, self._prefs)
+        self.prefs_changed.emit(self.field_key)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         if not self._customize_mode or event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
         g = event.globalPosition().toPoint()
-        self._press_global = g
-        self._drag_mode = "move"
-        self._press_offset = self.mapToGlobal(QPoint(0, 0)) - g
-        self.grabMouse()
+        edge = self._edge_at(event.pos())
+        if edge:
+            self._start_resize_drag(g, edge)
+        else:
+            self._drag_mode = "move"
+            self._press_global = g
+            self._drag_start_pos = self.pos()
+            self.raise_()
+            self.grabMouse()
         event.accept()
 
-    def mouseMoveEvent(self, event) -> None:
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if not self._customize_mode or self._drag_mode is None:
+            self._update_cursor(event.pos())
             super().mouseMoveEvent(event)
             return
         g = event.globalPosition().toPoint()
-        if self._press_global is None:
-            return
-
-        if self._drag_mode == "resize":
-            delta = g - self._press_global
-            h = self._preview_height_from_delta(delta.y())
-            span = self._span_from_delta(delta.x())
-            height_changed = h != self._preview_height
-            span_changed = span != self._prefs.col_span
-            if height_changed:
-                self._preview_height = h
-                size = self._snap_size_from_height(h)
-                self._apply_dims(size, span, animate=False, height=h)
-            elif span_changed:
-                size = self._snap_size_from_height(h)
-                self._apply_dims(size, span, animate=False, height=h)
-                self.layout_preview.emit(self.field_key)
-            event.accept()
-            return
-
-        dist = (g - self._press_global).manhattanLength()
-        if not self._floating and dist >= DRAG_THRESHOLD_PX:
-            self.set_drag_highlight(True)
-            self.setCursor(Qt.CursorShape.SizeAllCursor)
-            self.set_floating(True)
-            self.float_move.emit(g + self._press_offset)
-
-        if self._floating:
-            self.float_move.emit(g + self._press_offset)
+        delta = g - self._press_global
+        if self._drag_mode.startswith("resize"):
+            self._perform_resize(delta, self._drag_mode.split("_")[1])
+        elif self._drag_mode == "move":
+            if not self._floating:
+                self.set_drag_highlight(True)
+                self.set_floating(True)
+            self.move(self._drag_start_pos + delta)
         event.accept()
 
-    def mouseReleaseEvent(self, event) -> None:
-        if self._drag_mode is None or event.button() != Qt.MouseButton.LeftButton:
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self._drag_mode is None:
             super().mouseReleaseEvent(event)
             return
-        g = event.globalPosition().toPoint()
-
-        if self._drag_mode == "resize" and self._press_global is not None:
-            delta = g - self._press_global
-            h = self._preview_height_from_delta(delta.y())
-            size = self._snap_size_from_height(h)
-            span = self._span_from_delta(delta.x())
-            final_h = h
-            prev = self._saved_prefs
-            graph_save = self._graph_pref_for_height(final_h)
-            self._saved_prefs = CardPrefs(
-                size, graph_save, span, height_px=final_h
-            ).normalized()
-            self._prefs = self._saved_prefs
-            self._apply_dims(size, span, animate=True, height=final_h)
-            changed = (
-                size != prev.size
-                or span != prev.col_span
-                or graph_save != prev.graph
-                or final_h != self._base_height(prev.size)
-            )
-            if changed:
-                save_card_pref(self.field_key, self._prefs)
-                self.prefs_changed.emit(self.field_key)
-        elif self._floating:
-            self.float_end.emit(g)
-
+        if self._drag_mode.startswith("resize"):
+            self._finish_resize()
+        elif self._drag_mode == "move":
+            self._finish_move()
         self.releaseMouse()
         self._drag_mode = None
         self._press_global = None
