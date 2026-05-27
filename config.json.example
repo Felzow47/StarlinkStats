@@ -6,6 +6,7 @@
   "starlink_gateway_prefixes": ["192.168.1."],
   "starlink_wifi_ssids": [],
   "starlink_require_dish_route": true,
-  "hide_after_ticks_off_network": 3,
+  "hide_after_ticks_off_network": 1,
+  "_comment_network": "Détection auto : la dish (192.168.100.1) doit répondre — marche en Ethernet ou WiFi (SSID libre). starlink_wifi_ssids = secours optionnel.",
   "_comment_display": "Champs affichés : menu Personnaliser (clic droit) ou icône barre des tâches"
 }

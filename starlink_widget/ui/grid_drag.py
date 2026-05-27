@@ -38,7 +38,8 @@ class DropTarget:
     anchor_key: str
     grid_col: int  # colonne cible pour la carte dragguée
     stack: bool = False
-    drag_col: int = -1  # colonne d'origine (où va l'ancre lors d'un swap)
+    drag_col: int = -1  # colonne d'origine du drag
+    anchor_col: int = -1  # colonne actuelle de la carte ancre
 
 
 def _preview_insert_before(keys: list[str], drag_key: str, anchor_key: str) -> list[str]:
@@ -131,6 +132,7 @@ def compute_drop_targets(
     tiles: list[tuple[str, QWidget, CardPrefs]],
     *,
     drag_key: str,
+    drag_origin_col: int = -1,
 ) -> list[DropTarget]:
     """Calcule toutes les destinations valides pour une carte dragguée."""
     if not tiles or drag_key not in {k for k, _w, _p in tiles}:
@@ -147,9 +149,11 @@ def compute_drop_targets(
     full_geos = compute_grid_geometries(container_width, spacing, tiles)
     drag_geo = full_geos.get(drag_key)
     drag_col = -1
-    if drag_geo is not None:
+    if drag_origin_col in (0, 1):
+        drag_col = drag_origin_col
+    elif drag_geo is not None:
         drag_col = geo_grid_column(drag_geo, container_width, spacing)
-    if drag_prefs.grid_col in (0, 1):
+    elif drag_prefs.grid_col in (0, 1):
         drag_col = drag_prefs.grid_col
 
     col_w = _column_width(container_width, spacing)
@@ -164,6 +168,7 @@ def compute_drop_targets(
         *,
         stack: bool = False,
         swap_drag_col: int = -1,
+        swap_anchor_col: int = -1,
     ) -> None:
         expected_x = grid_col * (col_w + spacing)
         if abs(geo.x() - expected_x) > 4:
@@ -172,6 +177,7 @@ def compute_drop_targets(
             action == "swap" and geo.width() > col_w * 2
         ):
             return
+        acol = swap_anchor_col if swap_anchor_col in (0, 1) else grid_col
         sig = (
             geo.x(),
             geo.y(),
@@ -182,6 +188,7 @@ def compute_drop_targets(
             grid_col,
             stack,
             swap_drag_col,
+            acol,
         )
         if sig in seen:
             return
@@ -194,8 +201,12 @@ def compute_drop_targets(
                 grid_col,
                 stack=stack,
                 drag_col=swap_drag_col,
+                anchor_col=acol,
             )
         )
+
+    def _is_cross_column(anchor_col: int) -> bool:
+        return drag_col in (0, 1) and anchor_col in (0, 1) and drag_col != anchor_col
 
     def _cols_for_insert(anchor_key: str) -> tuple[int, ...]:
         _anchor_w, anchor_p = by_key[anchor_key]
@@ -216,34 +227,12 @@ def compute_drop_targets(
             else -1
         )
 
-        for col in _cols_for_insert(anchor_key):
-            # Drop sur une carte de l'autre colonne → swap, pas insertion
-            if (
-                anchor_geo is not None
-                and col == anchor_col
-                and drag_col in (0, 1)
-                and drag_col != anchor_col
-            ):
-                continue
-            order = _preview_insert_before(keys, drag_key, anchor_key)
-            geo = _drag_geometry(
-                width=container_width,
-                spacing=spacing,
-                order=order,
-                by_key=by_key,
-                drag_key=drag_key,
-                forced_col=col,
-                stack_anchor=None,
-            )
-            if geo is None:
-                continue
-            if geo_grid_column(geo, container_width, spacing) != col:
-                continue
-            _add(geo, "insert_before", anchor_key, col)
+        cross = _is_cross_column(anchor_col)
 
-        if drag_compact and anchor_compact:
-            for col in (0, 1):
-                order = _preview_insert_after(keys, drag_key, anchor_key)
+        # Colonnes opposées : uniquement l'échange (même logique dans les deux sens)
+        if not cross:
+            for col in _cols_for_insert(anchor_key):
+                order = _preview_insert_before(keys, drag_key, anchor_key)
                 geo = _drag_geometry(
                     width=container_width,
                     spacing=spacing,
@@ -251,15 +240,47 @@ def compute_drop_targets(
                     by_key=by_key,
                     drag_key=drag_key,
                     forced_col=col,
-                    stack_anchor=anchor_key,
+                    stack_anchor=None,
                 )
                 if geo is None:
                     continue
                 if geo_grid_column(geo, container_width, spacing) != col:
                     continue
-                _add(geo, "insert_after", anchor_key, col, stack=True)
+                _add(
+                    geo,
+                    "insert_before",
+                    anchor_key,
+                    col,
+                    swap_drag_col=drag_col,
+                    swap_anchor_col=anchor_col,
+                )
 
-        # Échange direct : la carte ancre prend la place d'origine du drag
+            if drag_compact and anchor_compact:
+                for col in (0, 1):
+                    order = _preview_insert_after(keys, drag_key, anchor_key)
+                    geo = _drag_geometry(
+                        width=container_width,
+                        spacing=spacing,
+                        order=order,
+                        by_key=by_key,
+                        drag_key=drag_key,
+                        forced_col=col,
+                        stack_anchor=anchor_key,
+                    )
+                    if geo is None:
+                        continue
+                    if geo_grid_column(geo, container_width, spacing) != col:
+                        continue
+                    _add(
+                        geo,
+                        "insert_after",
+                        anchor_key,
+                        col,
+                        stack=True,
+                        swap_drag_col=drag_col,
+                        swap_anchor_col=anchor_col,
+                    )
+
         if anchor_geo is not None and anchor_geo.width() <= col_w + spacing // 2:
             _add(
                 QRect(anchor_geo),
@@ -267,6 +288,7 @@ def compute_drop_targets(
                 anchor_key,
                 anchor_col,
                 swap_drag_col=drag_col,
+                swap_anchor_col=anchor_col,
             )
 
 
@@ -282,6 +304,34 @@ def _y_distance2(point: QPoint, rect: QRect) -> int:
     return (rect.center().y() - point.y()) ** 2
 
 
+def _overlap_area(a: QRect, b: QRect) -> int:
+    inter = a.intersected(b)
+    return max(0, inter.width()) * max(0, inter.height())
+
+
+def _swap_targets_for_point(
+    targets: list[DropTarget],
+    point: QPoint,
+    *,
+    hit_pad: int,
+    drag_rect: QRect | None,
+) -> list[DropTarget]:
+    swaps = [t for t in targets if t.action == "swap"]
+    if drag_rect is not None:
+        overlapping = [
+            t
+            for t in swaps
+            if _overlap_area(drag_rect, t.rect.adjusted(-8, -8, 8, 8)) > 0
+        ]
+        if overlapping:
+            return overlapping
+    return [
+        t
+        for t in swaps
+        if t.rect.adjusted(-hit_pad, -hit_pad, hit_pad, hit_pad).contains(point)
+    ]
+
+
 def pick_drop_target(
     targets: list[DropTarget],
     point: QPoint,
@@ -290,6 +340,7 @@ def pick_drop_target(
     spacing: int,
     drag_compact: bool,
     previous: DropTarget | None = None,
+    drag_rect: QRect | None = None,
 ) -> DropTarget | None:
     """Choisit la destination sous le curseur."""
     if not targets:
@@ -298,6 +349,14 @@ def pick_drop_target(
     col_w = _column_width(container_width, spacing)
     pointer_col = grid_column_at_x(point.x(), container_width, spacing)
     hit_pad = 10
+
+    swap_hits = _swap_targets_for_point(
+        targets, point, hit_pad=hit_pad, drag_rect=drag_rect
+    )
+    if swap_hits:
+        if drag_rect is not None:
+            return max(swap_hits, key=lambda t: _overlap_area(drag_rect, t.rect))
+        return min(swap_hits, key=lambda t: _distance2(point, t.rect))
 
     if previous is not None:
         sticky = previous.rect.adjusted(-14, -14, 14, 14)
@@ -324,9 +383,6 @@ def pick_drop_target(
         if t.rect.adjusted(-hit_pad, -hit_pad, hit_pad, hit_pad).contains(point)
     ]
     if inside:
-        swap_inside = [t for t in inside if t.action == "swap"]
-        if swap_inside:
-            return min(swap_inside, key=lambda t: _distance2(point, t.rect))
         wide = [t for t in inside if t.rect.width() > col_w + spacing // 2]
         if drag_compact and wide:
             anchor_key = min(wide, key=lambda t: _distance2(point, t.rect)).anchor_key
@@ -367,12 +423,46 @@ def pick_drop_target(
             best.anchor_key,
             pointer_col,
             best.stack,
+            drag_col=best.drag_col,
+            anchor_col=best.anchor_col,
         )
     else:
         result = best
 
 
     return result
+
+
+def _resolve_swap_cols(drag_col: int, anchor_col: int) -> tuple[int, int]:
+    """Colonnes explicites pour un échange (infère l'absent)."""
+    if drag_col in (0, 1) and anchor_col in (0, 1):
+        return drag_col, anchor_col
+    if anchor_col in (0, 1):
+        return 1 - anchor_col, anchor_col
+    if drag_col in (0, 1):
+        return drag_col, 1 - drag_col
+    return 0, 1
+
+
+def _apply_column_swap(
+    drag_key: str, anchor_key: str, drag_col: int, anchor_col: int
+) -> None:
+    """Échange ordre + colonnes : chaque carte prend la place de l'autre."""
+    from_col, to_col = _resolve_swap_cols(drag_col, anchor_col)
+    swap_field_order(drag_key, anchor_key)
+    set_card_grid_col(drag_key, to_col)
+    set_card_grid_col(anchor_key, from_col)
+    clear_stack_under(drag_key)
+    clear_stack_under(anchor_key)
+
+
+def _should_column_swap(target: DropTarget) -> bool:
+    """Vrai si le drag et l'ancre sont dans des colonnes différentes."""
+    drag_col = target.drag_col
+    anchor_col = target.anchor_col
+    if drag_col not in (0, 1) or anchor_col not in (0, 1):
+        return False
+    return drag_col != anchor_col
 
 
 def apply_drop_target(
@@ -383,6 +473,12 @@ def apply_drop_target(
     anchor_compact: bool,
 ) -> bool:
     """Applique le drop ; retourne True si l'ordre a changé."""
+    if _should_column_swap(target):
+        _apply_column_swap(
+            drag_key, target.anchor_key, target.drag_col, target.anchor_col
+        )
+        return True
+
     if target.action == "insert_before":
         insert_field_before(drag_key, target.anchor_key)
         set_card_grid_col(drag_key, target.grid_col)
@@ -393,12 +489,10 @@ def apply_drop_target(
         if not target.stack:
             clear_stack_under(drag_key)
     elif target.action == "swap":
-        swap_field_order(drag_key, target.anchor_key)
-        set_card_grid_col(drag_key, target.grid_col)
-        if target.drag_col in (0, 1):
-            set_card_grid_col(target.anchor_key, target.drag_col)
-        clear_stack_under(drag_key)
-        clear_stack_under(target.anchor_key)
+        _apply_column_swap(
+            drag_key, target.anchor_key, target.drag_col, target.anchor_col
+        )
+        return True
     else:
         return False
     return True
@@ -410,6 +504,7 @@ def target_identity(target: DropTarget) -> tuple:
         target.anchor_key,
         target.grid_col,
         target.drag_col,
+        target.anchor_col,
         target.rect.x(),
         target.rect.y(),
         target.stack,

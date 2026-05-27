@@ -30,7 +30,6 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
     config = load_config()
     window = MainWindow(config)
-    window.show()
     return app.exec()
 
 

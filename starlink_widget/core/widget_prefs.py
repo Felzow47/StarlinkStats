@@ -117,7 +117,14 @@ def set_card_grid_col(key: str, col: int) -> None:
     save_card_pref(
         key,
         CardPrefs(
-            prefs.size, prefs.graph, prefs.col_span, prefs.height_px, col
+            prefs.size,
+            prefs.graph,
+            prefs.col_span,
+            prefs.height_px,
+            col,
+            prefs.x,
+            prefs.y,
+            prefs.width_px,
         ).normalized(),
     )
 

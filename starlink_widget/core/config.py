@@ -24,7 +24,7 @@ class AppConfig:
     )
     starlink_wifi_ssids: List[str] = field(default_factory=list)
     starlink_require_dish_route: bool = True
-    hide_after_ticks_off_network: int = 3
+    hide_after_ticks_off_network: int = 1
 
     @property
     def starlink_target(self) -> str:

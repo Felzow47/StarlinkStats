@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import re
+import socket
 import subprocess
+import time
+import urllib.request
 from typing import List, Optional
 
 from starlink_widget.core.config import AppConfig
+from starlink_widget.core.connectivity import ping_host
+
+_ISP_CACHE_NAME = ""
+_ISP_CACHE_AT = 0.0
+_ISP_CACHE_TTL_S = 60.0
 
 
 def _run(cmd: List[str], timeout: float = 5.0) -> str:
@@ -58,38 +67,130 @@ def has_route_to_dish(host: str = "192.168.100.1") -> bool:
     return False
 
 
-def is_on_starlink_lan(config: AppConfig) -> bool:
-    """Return True if at least one configured Starlink LAN signal matches."""
-    results: List[bool] = []
+def can_reach_dish(
+    host: str = "192.168.100.1",
+    port: int = 9200,
+    *,
+    timeout_ms: int = 350,
+) -> bool:
+    """Teste si la dish Starlink répond (Ethernet ou WiFi, SSID indifférent)."""
+    timeout_s = max(0.05, timeout_ms / 1000)
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        pass
+    return ping_host(host, timeout_ms=timeout_ms)
 
-    if config.starlink_gateway_prefixes:
-        gateway = get_default_gateway()
-        results.append(
-            gateway is not None
-            and any(gateway.startswith(p) for p in config.starlink_gateway_prefixes)
+
+def clear_isp_cache() -> None:
+    global _ISP_CACHE_NAME, _ISP_CACHE_AT
+    _ISP_CACHE_NAME = ""
+    _ISP_CACHE_AT = 0.0
+
+
+def get_isp_name(*, force_refresh: bool = False) -> Optional[str]:
+    """Nom du FAI via l'IP publique (ex. Free, Orange, Starlink)."""
+    global _ISP_CACHE_NAME, _ISP_CACHE_AT
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and _ISP_CACHE_NAME
+        and now - _ISP_CACHE_AT < _ISP_CACHE_TTL_S
+    ):
+        return _ISP_CACHE_NAME
+    try:
+        req = urllib.request.Request(
+            "http://ip-api.com/json/?fields=status,isp,org",
+            headers={"User-Agent": "StarlinkWidget/1.0"},
         )
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            data = json.loads(resp.read().decode())
+        if data.get("status") == "success":
+            name = (data.get("isp") or data.get("org") or "").strip()
+            if name:
+                _ISP_CACHE_NAME = name
+                _ISP_CACHE_AT = now
+                return name
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        pass
+    return _ISP_CACHE_NAME or None
+
+
+def get_connection_profile_name() -> Optional[str]:
+    """Nom du profil réseau Windows (Ethernet ou Wi‑Fi)."""
+    output = _run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "(Get-NetConnectionProfile | Where-Object { "
+            "$_.IPv4Connectivity -ne 'NoTraffic' -and "
+            "$_.IPv4Connectivity -ne 'Disconnected' } | "
+            "Select-Object -First 1 -ExpandProperty Name)",
+        ],
+        timeout=4.0,
+    )
+    name = output.strip()
+    if not name:
+        return None
+    if name.lower() in (
+        "network",
+        "identifying...",
+        "unidentified network",
+        "réseau",
+        "reseau",
+    ):
+        return None
+    return name
+
+
+def get_off_network_label() -> str:
+    """Libellé du réseau actuel quand on n'est pas sur Starlink."""
+    isp = get_isp_name()
+    if isp:
+        return isp
+    ssid = get_wifi_ssid()
+    if ssid:
+        return ssid
+    profile = get_connection_profile_name()
+    if profile:
+        return profile
+    gateway = get_default_gateway()
+    if gateway:
+        return f"passerelle {gateway}"
+    return "autre réseau"
+
+
+def is_on_starlink_lan(config: AppConfig) -> bool:
+    """Vrai si la dish Starlink est joignable sur le LAN local."""
+    host = config.starlink_host
+    port = config.starlink_port
+
+    if can_reach_dish(host, port):
+        return True
 
     if config.starlink_wifi_ssids:
         ssid = get_wifi_ssid()
-        if ssid:
-            results.append(ssid in config.starlink_wifi_ssids)
+        if ssid and ssid in config.starlink_wifi_ssids:
+            return True
 
-    if config.starlink_require_dish_route:
-        results.append(has_route_to_dish(config.starlink_host))
+    if config.starlink_require_dish_route and has_route_to_dish(host):
+        return True
 
-    return any(results) if results else False
+    return False
 
 
 class NetworkPresenceTracker:
-    """Hysteresis: hide after N off ticks, show immediately on return."""
+    """Hystérésis : masquer hors Starlink, afficher dès le retour."""
 
-    def __init__(self, hide_after_ticks: int = 3) -> None:
-        self.hide_after_ticks = hide_after_ticks
+    def __init__(self, hide_after_ticks: int = 1) -> None:
+        self.hide_after_ticks = max(1, hide_after_ticks)
         self._off_count = 0
-        self._visible = True
+        self._visible = False
 
     def update(self, on_lan: bool) -> bool:
-        """Return whether the widget should be visible."""
+        """Indique si le widget doit être visible."""
         if on_lan:
             self._off_count = 0
             self._visible = True

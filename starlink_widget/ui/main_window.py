@@ -54,7 +54,7 @@ from starlink_widget.ui.grid_drag import (
     pick_drop_target,
     target_identity,
 )
-from starlink_widget.ui.grid_layout import metrics_area_width, place_metric_tiles
+from starlink_widget.ui.grid_layout import metrics_area_width, place_metric_tiles, geo_grid_column
 from starlink_widget.ui.layout_drag_preview import LayoutDragPreview
 from starlink_widget.ui.metric_tile import MetricTile
 from starlink_widget.ui.settings_dialog import SettingsDialog
@@ -78,6 +78,7 @@ HISTORY_LEN = 60
 HOVER_SHOW_DELAY_MS = 800
 CORNER_SNAP_RADIUS = 100
 CORNER_INSET = 24
+SETTINGS_DIALOG_GAP = 12
 
 
 class StatusDot(QWidget):
@@ -178,6 +179,7 @@ class MainWindow(QWidget):
         self._drop_targets: list[DropTarget] = []
         self._active_drop_target: DropTarget | None = None
         self._preview_target_key: tuple | None = None
+        self._float_origin_col: int = -1
 
         self.setObjectName("StarlinkWidget")
         self.setWindowFlags(
@@ -344,7 +346,11 @@ class MainWindow(QWidget):
         width = metrics_area_width(self._metrics_wrap)
         drag_key = self._float_tile.field_key
         self._drop_targets = compute_drop_targets(
-            width, spacing, placement, drag_key=drag_key
+            width,
+            spacing,
+            placement,
+            drag_key=drag_key,
+            drag_origin_col=self._float_origin_col,
         )
         # #region agent log
         debug_log(
@@ -359,11 +365,14 @@ class MainWindow(QWidget):
         )
         # #endregion
 
-    def _float_pointer_local(self) -> QPoint:
+    def _float_cursor_local(self) -> QPoint:
+        return self._metrics_wrap.mapFromGlobal(QCursor.pos())
+
+    def _float_drag_rect(self) -> QRect | None:
         if self._float_tile is None:
-            return QPoint()
+            return None
         ft = self._float_tile
-        return ft.pos() + QPoint(ft.width() // 2, ft.height() // 2)
+        return QRect(ft.pos(), ft.size())
 
     def _pick_drop_target(
         self, local_point: QPoint, *, refresh: bool = False
@@ -381,7 +390,15 @@ class MainWindow(QWidget):
             spacing=spacing,
             drag_compact=self._float_tile.is_grid_compact(),
             previous=self._active_drop_target,
+            drag_rect=self._float_drag_rect(),
         )
+
+    def _drop_preview_rect(self, target: DropTarget) -> QRect:
+        """Zone d'aperçu = position cible + dimensions réelles de la carte dragguée."""
+        ft = self._float_tile
+        if ft is None:
+            return target.rect
+        return QRect(target.rect.x(), target.rect.y(), ft.width(), ft.height())
 
     def _apply_drop(self, drag_key: str, target: DropTarget) -> bool:
         order_before = [
@@ -402,9 +419,17 @@ class MainWindow(QWidget):
             drag_compact=drag_compact,
             anchor_compact=anchor_compact,
         )
+        cross_swap = (
+            target.action == "swap"
+            or (
+                target.drag_col in (0, 1)
+                and target.anchor_col in (0, 1)
+                and target.drag_col != target.anchor_col
+            )
+        )
         if drag_tile is not None:
             drag_tile.set_prefs(get_card_pref(drag_key))
-        if target.action == "swap" and anchor_tile is not None:
+        if cross_swap and anchor_tile is not None:
             anchor_tile.set_prefs(get_card_pref(target.anchor_key))
         order_after = [
             k for k in load_ordered_metric_keys() if k in self._metric_tiles
@@ -443,27 +468,10 @@ class MainWindow(QWidget):
     def _show_drop_preview(self, target: DropTarget) -> None:
         if self._float_tile is None or self._layout_preview is None:
             return
-        drag_key = self._float_tile.field_key
-        active = target.rect
+        active = self._drop_preview_rect(target)
         self._layout_preview.set_compact_zones([active], active=active)
         self._layout_preview.set_preview({}, active)
         self._float_tile.raise_()
-        # #region agent log
-        debug_log(
-            "main_window:_show_drop_preview",
-            "drop preview",
-            {
-                "drag_key": drag_key,
-                "compact": self._float_tile.is_grid_compact(),
-                "static_moved": False,
-                "n_zones": 1,
-                "action": target.action,
-                "anchor": target.anchor_key,
-                "col": target.grid_col,
-            },
-            hypothesis_id="L",
-        )
-        # #endregion
 
     def _remove_float_placeholder(self) -> None:
         try:
@@ -499,6 +507,13 @@ class MainWindow(QWidget):
             )
             # #endregion
             geo = tile.geometry()
+            spacing = self._metrics_layout.spacing()
+            area_w = metrics_area_width(self._metrics_wrap)
+            if geo.width() > 0:
+                self._float_origin_col = geo_grid_column(geo, area_w, spacing)
+            else:
+                pcol = tile.prefs().grid_col
+                self._float_origin_col = pcol if pcol in (0, 1) else -1
             if tile.parent() is self._metrics_wrap and geo.width() > 0:
                 self._remove_float_placeholder()
                 self._float_placeholder = QWidget(self._metrics_wrap)
@@ -508,9 +523,8 @@ class MainWindow(QWidget):
             tile.setParent(self._metrics_wrap)
             tile.raise_()
             tile.set_floating(True)
-            spacing = self._metrics_layout.spacing()
             col_w = max(
-                1, (metrics_area_width(self._metrics_wrap) - spacing) // 2
+                1, (area_w - spacing) // 2
             )
             tile.setFixedWidth(col_w)
             self._clear_drag_preview()
@@ -768,10 +782,8 @@ class MainWindow(QWidget):
                 self._detach_float_tile(tile)
             ft = self._float_tile
             self._float_target_pos = self._metrics_wrap.mapFromGlobal(global_top_left)
-            pointer_local = self._metrics_wrap.mapFromGlobal(
-                global_top_left + QPoint(ft.width() // 2, ft.height() // 2)
-            )
-            candidate = self._pick_drop_target(pointer_local)
+            cursor_local = self._float_cursor_local()
+            candidate = self._pick_drop_target(cursor_local)
             self._active_drop_target = candidate
             # #region agent log
             debug_log(
@@ -780,7 +792,7 @@ class MainWindow(QWidget):
                 {
                     "drag_key": ft.field_key,
                     "compact": ft.is_grid_compact(),
-                    "pointer": [pointer_local.x(), pointer_local.y()],
+                    "pointer": [cursor_local.x(), cursor_local.y()],
                     "cursor": [self._float_target_pos.x(), self._float_target_pos.y()],
                     "slot_action": candidate.action if candidate else None,
                     "slot_anchor": candidate.anchor_key if candidate else None,
@@ -804,9 +816,7 @@ class MainWindow(QWidget):
                 or abs(ft.pos().y() - self._float_target_pos.y()) > 1
             ):
                 ft.move(self._float_target_pos)
-            self._float_pointer_global = self._metrics_wrap.mapToGlobal(
-                pointer_local
-            )
+            self._float_pointer_global = QCursor.pos()
             if not self._float_smooth_timer.isActive():
                 self._float_smooth_timer.start()
         except Exception as exc:
@@ -836,8 +846,9 @@ class MainWindow(QWidget):
                 else:
                     self._float_tile.move(nx, ny)
             ft = self._float_tile
-            center_local = ft.pos() + QPoint(ft.width() // 2, ft.height() // 2)
-            self._float_pointer_global = self._metrics_wrap.mapToGlobal(center_local)
+            cursor_local = self._float_cursor_local()
+            self._float_pointer_global = QCursor.pos()
+            self._active_drop_target = self._pick_drop_target(cursor_local)
             self._update_drag_target_preview()
         except Exception as exc:
             debug_exception("main_window:_tick_float_smooth", exc, hypothesis_id="B")
@@ -848,7 +859,7 @@ class MainWindow(QWidget):
             return
         target = self._active_drop_target
         if target is None:
-            target = self._pick_drop_target(self._float_pointer_local())
+            target = self._pick_drop_target(self._float_cursor_local())
         if target is None:
             self._clear_drop_highlights()
             self._clear_drag_preview()
@@ -882,10 +893,8 @@ class MainWindow(QWidget):
                 return
             drag_key = self._float_tile.field_key
             self._clear_drop_highlights()
-            target = self._active_drop_target
-            if target is None:
-                local = self._metrics_wrap.mapFromGlobal(global_pos)
-                target = self._pick_drop_target(local)
+            cursor_local = self._metrics_wrap.mapFromGlobal(global_pos)
+            target = self._pick_drop_target(cursor_local)
             did_swap = False
             if target is not None:
                 did_swap = self._apply_drop(drag_key, target)
@@ -913,6 +922,7 @@ class MainWindow(QWidget):
             self._active_drop_target = None
             self._preview_target_key = None
             self._drop_targets = []
+            self._float_origin_col = -1
             if self._float_tile is not None:
                 floating = self._float_tile
                 floating.clear_width_lock()
@@ -940,6 +950,7 @@ class MainWindow(QWidget):
         self._highlighted_drop_target_key = None
         self._active_drop_target = None
         self._drop_targets = []
+        self._float_origin_col = -1
         if self._float_tile is None:
             return
         floating = self._float_tile
@@ -969,6 +980,34 @@ class MainWindow(QWidget):
                 # Perte nulle ou absente : garder la courbe à 0 %
                 hist.append(0.0)
 
+    def _position_settings_dialog(self) -> None:
+        """Place le menu Personnaliser à côté du widget, pas au centre de l'écran."""
+        dlg = self._settings_dialog
+        if dlg is None:
+            return
+        dlg.adjustSize()
+        widget_geo = self.frameGeometry()
+        dlg_w = max(dlg.width(), dlg.minimumWidth())
+        dlg_h = max(dlg.height(), dlg.minimumHeight())
+        gap = SETTINGS_DIALOG_GAP
+
+        x = widget_geo.right() + gap
+        y = widget_geo.top()
+
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            area = screen.availableGeometry()
+            if x + dlg_w > area.right():
+                x = widget_geo.left() - gap - dlg_w
+            if x < area.left():
+                x = widget_geo.left()
+            if y + dlg_h > area.bottom():
+                y = max(area.top(), area.bottom() - dlg_h)
+            y = max(area.top(), min(y, area.bottom() - dlg_h))
+            x = max(area.left(), min(x, area.right() - dlg_w))
+
+        dlg.move(x, y)
+
     def _open_settings(self) -> None:
         if self._settings_dialog is None:
             self._settings_dialog = SettingsDialog(self)
@@ -988,6 +1027,7 @@ class MainWindow(QWidget):
             self._settings_dialog.activateWindow()
         else:
             self._settings_dialog.show()
+        self._position_settings_dialog()
         self._sync_customize_mode()
 
     def _quit_app(self) -> None:
@@ -1101,11 +1141,17 @@ class MainWindow(QWidget):
                 self._update_tray(HealthState.GREEN, "Initialisation")
         else:
             self._flash_timer.stop()
+            if self._settings_dialog is not None and self._settings_dialog.isVisible():
+                self._settings_dialog.close()
             self.hide()
-            self._update_tray(HealthState.HIDDEN, "Hors réseau Starlink")
 
     def _on_snapshot(self, snapshot: StatusSnapshot) -> None:
         if not snapshot.on_starlink_lan:
+            label = snapshot.off_network_label or "autre réseau"
+            self._update_tray(
+                HealthState.HIDDEN,
+                f"Pas sur Starlink · {label}",
+            )
             return
         self._last_snapshot = snapshot
         self._apply_snapshot(snapshot)

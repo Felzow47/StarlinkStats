@@ -47,3 +47,4 @@ class StatusSnapshot:
 
     critical_alerts: List[str] = field(default_factory=list)
     error_message: Optional[str] = None
+    off_network_label: str = ""  # FAI / réseau actuel hors Starlink

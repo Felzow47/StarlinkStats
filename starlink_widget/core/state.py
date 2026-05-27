@@ -35,8 +35,46 @@ def compute_azimuth_delta(
 
 
 def is_obstructed(snapshot: StatusSnapshot) -> bool:
-    """Obstruction active uniquement si currently_obstructed est True (gRPC)."""
+    """Obstruction gRPC ou perte ping élevée (avec hystérésis)."""
     return snapshot.currently_obstructed is True
+
+
+PING_DROP_OBSTRUCT_ENTER_PCT = 60.0
+PING_DROP_OBSTRUCT_EXIT_PCT = 30.0
+
+
+class PingDropObstructionTracker:
+    """Obstruction déduite de la perte ping : >60 % entre, <30 % sort."""
+
+    def __init__(
+        self,
+        *,
+        enter_pct: float = PING_DROP_OBSTRUCT_ENTER_PCT,
+        exit_pct: float = PING_DROP_OBSTRUCT_EXIT_PCT,
+    ) -> None:
+        self.enter_pct = enter_pct
+        self.exit_pct = exit_pct
+        self._active = False
+
+    def update(self, drop_rate_pct: Optional[float]) -> bool:
+        if drop_rate_pct is None:
+            return self._active
+        if self._active:
+            if drop_rate_pct < self.exit_pct:
+                self._active = False
+        elif drop_rate_pct > self.enter_pct:
+            self._active = True
+        return self._active
+
+
+def apply_ping_drop_obstruction(
+    snapshot: StatusSnapshot, tracker: PingDropObstructionTracker
+) -> None:
+    """Fusionne obstruction gRPC et perte ping (hystérésis)."""
+    ping_obs = tracker.update(snapshot.pop_ping_drop_rate)
+    snapshot.currently_obstructed = (
+        snapshot.currently_obstructed is True or ping_obs
+    )
 
 
 def resolve_internet_ok(snapshot: StatusSnapshot, ping_ok: bool) -> bool:
