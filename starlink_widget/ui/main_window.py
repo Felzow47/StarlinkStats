@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Deque, Dict, List, Optional, Set
 
-from PyQt6.QtCore import QPoint, QRect, QRectF, QSettings, Qt, QTimer
+from PyQt6.QtCore import QPoint, QEasingCurve, QRect, QRectF, QPropertyAnimation, QSettings, QSize, Qt, QTimer
 from PyQt6.QtGui import (
     QAction,
+    QCursor,
     QColor,
+    QFontMetrics,
     QIcon,
     QMouseEvent,
     QPainter,
@@ -19,7 +21,6 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
     QMenu,
     QSystemTrayIcon,
@@ -45,8 +46,10 @@ from starlink_widget.core.widget_prefs import (
     reorder_field,
 )
 from starlink_widget.ui.grid_layout import place_metric_tiles
+from starlink_widget.ui.animations import DURATION_OPACITY
 from starlink_widget.ui.metric_tile import MetricTile
 from starlink_widget.ui.settings_dialog import SettingsDialog
+from starlink_widget.ui.snap_corner_hint import SnapCandidate, SnapCornerHint
 from starlink_widget.ui.styles import (
     CARD_BG,
     CARD_BG_FLASH,
@@ -65,13 +68,18 @@ SETTINGS_APP = "Widget"
 HISTORY_LEN = 60
 SWAP_OVERLAP_THRESHOLD = 0.5
 HIGHLIGHT_OVERLAP_THRESHOLD = 0.28
+HOVER_SHOW_DELAY_MS = 800
+CORNER_SNAP_RADIUS = 100
+CORNER_INSET = 24
 
 
 class StatusDot(QWidget):
+    SIZE = 10
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._color = QColor(OK_GREEN)
-        self.setFixedSize(10, 10)
+        self.setFixedSize(self.SIZE, self.SIZE)
 
     def set_color(self, hex_color: str) -> None:
         self._color = QColor(hex_color)
@@ -82,7 +90,47 @@ class StatusDot(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self._color)
-        painter.drawEllipse(0, 0, 10, 10)
+        s = self.SIZE
+        painter.drawEllipse(0, 0, s, s)
+
+
+class StatusTitleRow(QWidget):
+    """Ligne statut : point coloré aligné optiquement sur le titre."""
+
+    GAP = 8
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.status_dot = StatusDot(self)
+        self.status_title = QLabel("Initialisation", self)
+        self.status_title.setObjectName("statusTitle")
+        self.status_title.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+
+    def sizeHint(self) -> QSize:
+        fm = QFontMetrics(self.status_title.font())
+        h = max(StatusDot.SIZE, fm.height())
+        return QSize(200, h)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._layout_row()
+
+    def _layout_row(self) -> None:
+        row_h = self.height()
+        title_x = StatusDot.SIZE + self.GAP
+        dot_y = (row_h - StatusDot.SIZE) // 2
+        self.status_dot.setGeometry(0, dot_y, StatusDot.SIZE, StatusDot.SIZE)
+        self.status_title.setGeometry(
+            title_x,
+            0,
+            max(0, self.width() - title_x),
+            row_h,
+        )
 
 
 class MainWindow(QWidget):
@@ -107,6 +155,15 @@ class MainWindow(QWidget):
         self._float_smooth_timer = QTimer(self)
         self._float_smooth_timer.setInterval(16)
         self._float_smooth_timer.timeout.connect(self._tick_float_smooth)
+        self._cursor_over = False
+        self._opacity_anim: QPropertyAnimation | None = None
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setInterval(50)
+        self._hover_timer.timeout.connect(self._poll_hover_passive)
+        self._show_delay_timer = QTimer(self)
+        self._show_delay_timer.setSingleShot(True)
+        self._show_delay_timer.timeout.connect(self._fade_in_passive)
+        self._snap_hint = SnapCornerHint()
 
         self.setObjectName("StarlinkWidget")
         self.setWindowFlags(
@@ -125,6 +182,8 @@ class MainWindow(QWidget):
         self._setup_flash_timer()
         self._start_worker()
         self._fit_to_content()
+        self._hover_timer.start()
+        self._apply_interaction_mode()
 
     def _build_ui(self) -> None:
         self._root_layout = QVBoxLayout(self)
@@ -132,21 +191,21 @@ class MainWindow(QWidget):
         self._root_layout.setSpacing(10)
 
         self._header_wrap = QWidget()
-        header = QHBoxLayout(self._header_wrap)
+        header = QVBoxLayout(self._header_wrap)
         header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
-        self.status_dot = StatusDot()
-        header.addWidget(self.status_dot, alignment=Qt.AlignmentFlag.AlignTop)
-        header_text = QVBoxLayout()
-        header_text.setSpacing(1)
-        self.status_title = QLabel("Initialisation")
-        self.status_title.setObjectName("statusTitle")
-        header_text.addWidget(self.status_title)
+        header.setSpacing(2)
+
+        title_row = StatusTitleRow()
+        self._title_row = title_row
+        self.status_dot = title_row.status_dot
+        self.status_title = title_row.status_title
+        header.addWidget(title_row)
+
         self.status_subtitle = QLabel("")
         self.status_subtitle.setObjectName("statusSubtitle")
+        self.status_subtitle.setContentsMargins(18, 0, 0, 0)
         self.status_subtitle.setVisible(False)
-        header_text.addWidget(self.status_subtitle)
-        header.addLayout(header_text, stretch=1)
+        header.addWidget(self.status_subtitle)
         self._root_layout.addWidget(self._header_wrap)
 
         self.alert_label = QLabel("")
@@ -164,6 +223,8 @@ class MainWindow(QWidget):
         self._root_layout.addWidget(self._metrics_wrap)
 
         self.setStyleSheet(label_styles())
+        self._title_row.updateGeometry()
+        self._title_row._layout_row()
         self._apply_paint_state(HealthState.GREEN)
 
     def _create_metric_tile(self, key: str) -> MetricTile:
@@ -294,12 +355,85 @@ class MainWindow(QWidget):
             and self._settings_dialog.isVisible()
         )
 
+    def _stop_opacity_anim(self) -> None:
+        anim = self._opacity_anim
+        if anim is None:
+            return
+        self._opacity_anim = None
+        anim.stop()
+
+    def _on_opacity_anim_finished(self) -> None:
+        self._opacity_anim = None
+
+    def _animate_passive_opacity(self, target: float) -> None:
+        if abs(self.windowOpacity() - target) < 0.01:
+            self.setWindowOpacity(target)
+            return
+        self._stop_opacity_anim()
+        anim = QPropertyAnimation(self, b"windowOpacity", self)
+        anim.setDuration(DURATION_OPACITY)
+        anim.setStartValue(self.windowOpacity())
+        anim.setEndValue(target)
+        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        anim.finished.connect(self._on_opacity_anim_finished)
+        anim.start()
+        self._opacity_anim = anim
+
+    def _fade_out_passive(self) -> None:
+        self._show_delay_timer.stop()
+        self._animate_passive_opacity(0.0)
+
+    def _schedule_fade_in_passive(self) -> None:
+        self._show_delay_timer.stop()
+        if not self._cursor_over:
+            self._stop_opacity_anim()
+            self._show_delay_timer.start(HOVER_SHOW_DELAY_MS)
+
+    def _fade_in_passive(self) -> None:
+        if self._cursor_over or self._is_customize_mode():
+            return
+        self._animate_passive_opacity(1.0)
+
+    def _apply_interaction_mode(self) -> None:
+        """Mode normal (perso ouverte) vs passif (click-through + fade au survol)."""
+        if self._is_customize_mode():
+            self._show_delay_timer.stop()
+            self._stop_opacity_anim()
+            self.setWindowOpacity(1.0)
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            self._cursor_over = False
+            return
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        over = self.frameGeometry().contains(QCursor.pos())
+        self._cursor_over = over
+        self._show_delay_timer.stop()
+        self._stop_opacity_anim()
+        if over:
+            self.setWindowOpacity(0.0)
+        else:
+            self.setWindowOpacity(1.0)
+
+    def _poll_hover_passive(self) -> None:
+        if not self.isVisible() or self._is_customize_mode():
+            return
+        over = self.frameGeometry().contains(QCursor.pos())
+        if over == self._cursor_over:
+            return
+        self._cursor_over = over
+        if over:
+            self._fade_out_passive()
+        else:
+            self._schedule_fade_in_passive()
+
     def _sync_customize_mode(self) -> None:
         on = self._is_customize_mode()
         if not on and self._float_tile is not None:
             self._cancel_float_drag()
+        if not on:
+            self._hide_snap_hint()
         for tile in self._metric_tiles.values():
             tile.set_customize_mode(on)
+        self._apply_interaction_mode()
 
     def _float_geometry_local(self) -> QRect | None:
         if self._float_tile is None:
@@ -364,6 +498,8 @@ class MainWindow(QWidget):
 
     def _set_status(self, raw_text: str, subtitle: str = "") -> None:
         self.status_title.setText(format_status_title(raw_text))
+        self._title_row.updateGeometry()
+        self._title_row._layout_row()
         if subtitle:
             self.status_subtitle.setText(subtitle)
             self.status_subtitle.setVisible(True)
@@ -372,10 +508,10 @@ class MainWindow(QWidget):
             self.status_subtitle.setVisible(False)
 
     def contextMenuEvent(self, event) -> None:
+        if not self._is_customize_mode():
+            event.ignore()
+            return
         menu = QMenu(self)
-        customize = menu.addAction("Personnaliser…")
-        customize.triggered.connect(self._open_settings)
-        menu.addSeparator()
         hide_action = menu.addAction("Masquer")
         hide_action.triggered.connect(self.hide)
         quit_action = menu.addAction("Quitter le widget")
@@ -731,7 +867,61 @@ class MainWindow(QWidget):
         settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
         settings.setValue("geometry", self.saveGeometry())
 
+    def _corner_snap_pos(self, proposed: QPoint) -> QPoint:
+        candidate = self._find_snap_candidate(proposed)
+        return candidate.widget_pos if candidate else proposed
+
+    def _find_snap_candidate(self, proposed: QPoint) -> SnapCandidate | None:
+        """Coin d'accrochage le plus proche, tous écrans confondus."""
+        w = self.width()
+        h = self.height()
+        snap_d2 = CORNER_SNAP_RADIUS * CORNER_SNAP_RADIUS
+        best: SnapCandidate | None = None
+        best_d2 = snap_d2 + 1
+
+        for screen in QApplication.screens():
+            area = screen.availableGeometry().adjusted(
+                CORNER_INSET, CORNER_INSET, -CORNER_INSET, -CORNER_INSET
+            )
+            if area.width() < w or area.height() < h:
+                continue
+            x0 = area.x()
+            y0 = area.y()
+            x1 = area.x() + area.width() - w
+            y1 = area.y() + area.height() - h
+            options = (
+                ("tl", QPoint(x0, y0)),
+                ("tr", QPoint(x1, y0)),
+                ("bl", QPoint(x0, y1)),
+                ("br", QPoint(x1, y1)),
+            )
+            for corner, widget_pos in options:
+                dx = proposed.x() - widget_pos.x()
+                dy = proposed.y() - widget_pos.y()
+                d2 = dx * dx + dy * dy
+                if d2 <= snap_d2 and d2 < best_d2:
+                    best_d2 = d2
+                    best = SnapCandidate(widget_pos, corner)
+        return best
+
+    def _update_snap_hint(self, proposed: QPoint) -> None:
+        candidate = self._find_snap_candidate(proposed)
+        if candidate:
+            self._snap_hint.show_corner(
+                candidate.corner,
+                candidate.widget_pos,
+                QSize(self.width(), self.height()),
+            )
+        else:
+            self._hide_snap_hint()
+
+    def _hide_snap_hint(self) -> None:
+        self._snap_hint.hide_hint()
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if not self._is_customize_mode():
+            event.ignore()
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             child = self.childAt(event.position().toPoint())
             if isinstance(child, MetricTile) or self._is_under_metric_tile(child):
@@ -751,12 +941,23 @@ class MainWindow(QWidget):
         return False
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if not self._is_customize_mode():
+            event.ignore()
+            return
         if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            proposed = event.globalPosition().toPoint() - self._drag_pos
+            self.move(proposed)
+            self._update_snap_hint(proposed)
             event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if not self._is_customize_mode():
+            event.ignore()
+            return
+        if self._drag_pos is not None:
+            self.move(self._corner_snap_pos(self.frameGeometry().topLeft()))
         self._drag_pos = None
+        self._hide_snap_hint()
         self._save_geometry()
 
     def closeEvent(self, event) -> None:

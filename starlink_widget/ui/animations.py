@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QWidget
 
 DURATION_MOVE = 220
 DURATION_RESIZE = 120
+DURATION_OPACITY = 280
 
 
 def animate_geometry(
@@ -38,4 +39,18 @@ def animate_height(
     anim.setEndValue(end)
     anim.setEasingCurve(QEasingCurve.Type.OutCubic)
     anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+    return anim
+
+
+def animate_window_opacity(
+    widget: QWidget,
+    end: float,
+    duration: int = DURATION_OPACITY,
+) -> QPropertyAnimation:
+    anim = QPropertyAnimation(widget, b"windowOpacity", widget)
+    anim.setDuration(duration)
+    anim.setStartValue(widget.windowOpacity())
+    anim.setEndValue(end)
+    anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+    anim.start(QPropertyAnimation.DeletionPolicy.KeepWhenStopped)
     return anim

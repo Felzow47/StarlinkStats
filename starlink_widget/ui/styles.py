@@ -68,6 +68,8 @@ QLabel#statusTitle {{
     font-size: 17px;
     font-weight: 700;
     letter-spacing: -0.3px;
+    padding: 0px;
+    margin: 0px;
 }}
 QLabel#statusSubtitle {{
     font-size: 11px;
