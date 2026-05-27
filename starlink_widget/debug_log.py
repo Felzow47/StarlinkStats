@@ -7,8 +7,8 @@ import time
 import traceback
 from pathlib import Path
 
-_LOG_PATH = Path(__file__).resolve().parent.parent / "debug-26b621.log"
-_SESSION = "26b621"
+_LOG_PATH = Path(__file__).resolve().parent.parent / "debug-ff12e1.log"
+_SESSION = "ff12e1"
 
 
 def debug_log(

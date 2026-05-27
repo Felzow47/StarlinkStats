@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -45,7 +45,7 @@ GRAPH_HEIGHT_EXTRA = 12
 GRAPH_VISIBLE_MIN_H = SIZE_HEIGHTS[SIZE_SMALL] + GRAPH_HEIGHT_EXTRA
 MIN_HEIGHT_TEXT_ONLY = SIZE_HEIGHTS[SIZE_SMALL]
 # Texte seul : plus petit que le preset S (graphique masqué)
-MIN_HEIGHT_COMPACT = 48
+MIN_HEIGHT_COMPACT = 56
 # Cartes empilables dans une même colonne (texte seul, sans graphique)
 COMPACT_GRID_MAX_H = MIN_HEIGHT_TEXT_ONLY
 
@@ -212,10 +212,15 @@ class MetricTile(QWidget):
         return self._show_graph_for_height(height)
 
     def _base_height(self, size: int | None = None) -> int:
+        if self._saved_prefs.height_px > 0:
+            return self._snap_height_to_grid(self._saved_prefs.height_px)
         s = size if size is not None else self._saved_prefs.size
+        if supports_graph(self.field_key) and self._saved_prefs.graph:
+            h = SIZE_HEIGHTS.get(s, SIZE_MEDIUM) + GRAPH_HEIGHT_EXTRA
+            return self._snap_height_to_grid(h)
+        if not supports_graph(self.field_key) or not self._saved_prefs.graph:
+            return self._snap_height_to_grid(MIN_HEIGHT_COMPACT)
         h = SIZE_HEIGHTS.get(s, SIZE_MEDIUM)
-        if self._saved_prefs.graph and supports_graph(self.field_key):
-            h += GRAPH_HEIGHT_EXTRA
         return self._snap_height_to_grid(h)
 
     def _min_allowed_height(self, height: int | None = None) -> int:
@@ -324,11 +329,67 @@ class MetricTile(QWidget):
         start = self._height_for_size(self._saved_prefs.size)
         return self._snap_height_to_grid(start + int(dy * 0.55))
 
+    def _content_min_height(self) -> int:
+        """Hauteur minimale pour afficher titre + valeur sans coupure."""
+        self._root_layout.activate()
+        return self._root_layout.sizeHint().height()
+
+    def _is_compact_height(self, height: int) -> bool:
+        return height <= COMPACT_GRID_MAX_H and not self._show_graph_for_height(height)
+
+    def _grid_height_from_prefs(self) -> int:
+        if self._saved_prefs.height_px > 0:
+            return self._snap_height_to_grid(self._saved_prefs.height_px)
+        if self._preview_height > 0:
+            return self._snap_height_to_grid(self._preview_height)
+        return self._base_height()
+
+    def layout_height(self) -> int:
+        """Hauteur de référence pour la grille."""
+        h = self._grid_height_from_prefs()
+        if self._is_compact_height(h):
+            return h
+        return max(h, self._content_min_height())
+
+    def prepare_for_grid_layout(self) -> int:
+        """Sync typo + hauteur (conserve le compact choisi par l'utilisateur)."""
+        h = self._grid_height_from_prefs()
+        self._preview_height = h
+        self._update_footer_placement()
+        self._apply_compact_layout(h)
+        self._apply_typography(h)
+        if not self._is_compact_height(h):
+            need = self._content_min_height()
+            if need > h:
+                h = self._snap_height_to_grid(need)
+                self._preview_height = h
+                self._apply_compact_layout(h)
+                self._apply_typography(h)
+        return h
+
+    def apply_grid_geometry(self, geo: QRect) -> None:
+        """Positionne la carte et applique la typo pour cette taille."""
+        h = geo.height()
+        self._preview_height = h
+        self.setFixedSize(geo.width(), h)
+        self.move(geo.topLeft())
+        self._update_footer_placement()
+        self._apply_compact_layout(h)
+        self._apply_typography(h)
+        if self._is_compact_height(h):
+            return
+        need = self._content_min_height()
+        if need > h:
+            h = self._snap_height_to_grid(need)
+            self._preview_height = h
+            self.setFixedHeight(h)
+            self._apply_typography(h)
+
     def is_grid_compact(self) -> bool:
         """Carte assez petite pour s'empiler avec une autre dans la même colonne."""
         if self._prefs.col_span >= 2:
             return False
-        h = self._preview_height
+        h = self.layout_height()
         return h <= COMPACT_GRID_MAX_H and not self._show_graph_for_height(h)
 
     def _typography_height_range(self) -> tuple[int, int]:
@@ -385,6 +446,15 @@ class MetricTile(QWidget):
         self.footer_wide.setStyleSheet(
             f"color: {TEXT_SECONDARY}; font-size: {footer_px}px; font-weight: 400;"
         )
+        if self._is_compact_height(h):
+            self.title_label.setMinimumHeight(0)
+            self.value_label.setMinimumHeight(0)
+        elif h >= MIN_HEIGHT_TEXT_ONLY:
+            self.title_label.setMinimumHeight(title_px + 4)
+            self.value_label.setMinimumHeight(value_px + 6)
+        else:
+            self.title_label.setMinimumHeight(0)
+            self.value_label.setMinimumHeight(0)
 
     def _update_footer_placement(self) -> None:
         show_graph = self._show_graph_for_height(self._preview_height)
@@ -453,7 +523,10 @@ class MetricTile(QWidget):
         self._graph_user_wants = enabled
         h = max(self._preview_height, GRAPH_VISIBLE_MIN_H) if enabled else self._preview_height
         self._prefs = CardPrefs(
-            self._saved_prefs.size, enabled, self._saved_prefs.col_span
+            self._saved_prefs.size,
+            enabled,
+            self._saved_prefs.col_span,
+            height_px=self._saved_prefs.height_px,
         ).normalized()
         self._saved_prefs = self._prefs
         save_card_pref(self.field_key, self._prefs)
@@ -471,7 +544,9 @@ class MetricTile(QWidget):
         menu.exec(event.globalPos())
 
     def _commit_dims(self, size: int, span: int) -> None:
-        self._saved_prefs = CardPrefs(size, self._prefs.graph, span).normalized()
+        self._saved_prefs = CardPrefs(
+            size, self._prefs.graph, span, height_px=self._preview_height
+        ).normalized()
         self._apply_dims(size, span, animate=True)
         save_card_pref(self.field_key, self._prefs)
         self.prefs_changed.emit(self.field_key)
@@ -544,7 +619,9 @@ class MetricTile(QWidget):
             final_h = h
             prev = self._saved_prefs
             graph_save = self._graph_pref_for_height(final_h)
-            self._saved_prefs = CardPrefs(size, graph_save, span).normalized()
+            self._saved_prefs = CardPrefs(
+                size, graph_save, span, height_px=final_h
+            ).normalized()
             self._prefs = self._saved_prefs
             self._apply_dims(size, span, animate=True, height=final_h)
             changed = (
