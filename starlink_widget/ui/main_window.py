@@ -92,6 +92,7 @@ class MainWindow(QWidget):
         self._drag_pos: QPoint | None = None
         self._flash_on = False
         self._current_state = HealthState.GREEN
+        self._last_status_text = "Initialisation"
         self._worker: PollWorker | None = None
         self._last_snapshot: Optional[StatusSnapshot] = None
         self._visible_fields: Set[str] = load_visible_fields()
@@ -549,19 +550,38 @@ class MainWindow(QWidget):
 
     def _toggle_flash(self) -> None:
         if self._current_state == HealthState.RED and self.isVisible():
-            self._apply_paint_state(HealthState.RED, flashing=not self._flash_on)
+            flashing = not self._flash_on
+            self._apply_paint_state(HealthState.RED, flashing=flashing)
+            self._update_tray(
+                HealthState.RED, self._last_status_text, flashing=flashing
+            )
 
-    def _make_tray_icon(self) -> QIcon:
+    def _make_tray_icon(self, hex_color: str = OK_GREEN) -> QIcon:
         size = 64
         pix = QPixmap(size, size)
         pix.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pix)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QColor(OK_GREEN))
+        painter.setBrush(QColor(hex_color))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(10, 10, size - 20, size - 20)
         painter.end()
         return QIcon(pix)
+
+    def _update_tray(
+        self,
+        state: HealthState,
+        status_text: str,
+        *,
+        flashing: bool = False,
+    ) -> None:
+        if not hasattr(self, "tray"):
+            return
+        self.tray.setIcon(
+            self._make_tray_icon(status_color(state, flashing))
+        )
+        title = format_status_title(status_text)
+        self.tray.setToolTip(f"Starlink — {title}")
 
     def _setup_tray(self) -> None:
         self.tray = QSystemTrayIcon(self)
@@ -616,11 +636,18 @@ class MainWindow(QWidget):
     def _on_visibility(self, visible: bool) -> None:
         if visible:
             self.show()
-            self.tray.setToolTip("Starlink Widget")
+            if self._last_snapshot is not None:
+                self._update_tray(
+                    self._current_state,
+                    self._last_status_text,
+                    flashing=self._flash_on,
+                )
+            else:
+                self._update_tray(HealthState.GREEN, "Initialisation")
         else:
             self._flash_timer.stop()
             self.hide()
-            self.tray.setToolTip("Hors réseau Starlink — widget masqué")
+            self._update_tray(HealthState.HIDDEN, "Hors réseau Starlink")
 
     def _on_snapshot(self, snapshot: StatusSnapshot) -> None:
         if not snapshot.on_starlink_lan:
@@ -631,6 +658,7 @@ class MainWindow(QWidget):
     def _apply_snapshot(self, snapshot: StatusSnapshot) -> None:
         health, status_text = evaluate_health(snapshot)
         self._current_state = health
+        self._last_status_text = status_text
 
         show_header = "connection_status" in self._visible_fields
         self._header_wrap.setVisible(show_header)
@@ -647,6 +675,12 @@ class MainWindow(QWidget):
         else:
             self._flash_timer.stop()
             self._apply_paint_state(health, flashing=False)
+
+        self._update_tray(
+            health,
+            status_text,
+            flashing=health == HealthState.RED and self._flash_on,
+        )
 
         show_alerts = "alerts_summary" in self._visible_fields
         alerts = snapshot.critical_alerts
