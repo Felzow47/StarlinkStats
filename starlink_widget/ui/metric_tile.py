@@ -164,14 +164,14 @@ class MetricTile(QWidget):
         self._graph_user_wants = self._prefs.graph
         self._customize_mode = False
         self._press_global: QPoint | None = None
-        self._drag_mode: str | None = None  # "move" | "resize_top" | "resize_bottom" | "resize_left" | "resize_right"
+        self._press_offset = QPoint()
+        self._drag_mode: str | None = None  # "move" | "resize_top" | ...
         self._floating = False
         self._drop_target = False
         self._preview_height = self._base_height()
         # Dimensions au début du resize
         self._resize_start_geo: QRect = QRect()
-        # Position au début du move
-        self._drag_start_pos: QPoint = QPoint()
+        # Position au début du move (géré par MainWindow en mode flottant)
         self.setObjectName("metricTile")
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -675,8 +675,6 @@ class MetricTile(QWidget):
         """Persiste les nouvelles dimensions après un resize."""
         final_w = self.width()
         final_h = self.height()
-        final_x = self.x()
-        final_y = self.y()
         graph_save = self._graph_pref_for_height(final_h)
         size = self._snap_size_from_height(final_h)
         parent = self.parentWidget()
@@ -685,45 +683,10 @@ class MetricTile(QWidget):
         self._saved_prefs = CardPrefs(
             size, graph_save, span,
             height_px=final_h, grid_col=self._saved_prefs.grid_col,
-            x=final_x, y=final_y, width_px=final_w,
+            width_px=final_w,
         ).normalized()
         self._prefs = self._saved_prefs
         self._preview_height = final_h
-        save_card_pref(self.field_key, self._prefs)
-        self.prefs_changed.emit(self.field_key)
-
-    def _finish_move(self) -> None:
-        """Snap to grid + anti-collision + persistance après un move."""
-        if not self._floating:
-            return
-        GRID_SIZE = 20
-        new_x = round(self.x() / GRID_SIZE) * GRID_SIZE
-        new_y = round(self.y() / GRID_SIZE) * GRID_SIZE
-
-        parent = self.parentWidget()
-        if parent:
-            max_x = max(0, parent.width() - self.width())
-            new_x = max(0, min(new_x, max_x))
-            new_y = max(0, new_y)
-
-            my_rect = QRect(new_x, new_y, self.width(), self.height())
-            collision = False
-            for child in parent.children():
-                if isinstance(child, type(self)) and child is not self and child.isVisible():
-                    if child.geometry().intersects(my_rect.adjusted(2, 2, -2, -2)):
-                        collision = True
-                        break
-            if collision:
-                new_x = self._prefs.x
-                new_y = self._prefs.y
-
-        self.move(new_x, new_y)
-        self._saved_prefs = CardPrefs(
-            self._prefs.size, self._prefs.graph, self._prefs.col_span,
-            height_px=self._prefs.height_px, grid_col=self._prefs.grid_col,
-            x=new_x, y=new_y, width_px=self._prefs.width_px,
-        ).normalized()
-        self._prefs = self._saved_prefs
         save_card_pref(self.field_key, self._prefs)
         self.prefs_changed.emit(self.field_key)
 
@@ -738,8 +701,7 @@ class MetricTile(QWidget):
         else:
             self._drag_mode = "move"
             self._press_global = g
-            self._drag_start_pos = self.pos()
-            self.raise_()
+            self._press_offset = self.mapToGlobal(QPoint(0, 0)) - g
             self.grabMouse()
         event.accept()
 
@@ -749,24 +711,31 @@ class MetricTile(QWidget):
             super().mouseMoveEvent(event)
             return
         g = event.globalPosition().toPoint()
+        if self._press_global is None:
+            return
         delta = g - self._press_global
         if self._drag_mode.startswith("resize"):
             self._perform_resize(delta, self._drag_mode.split("_")[1])
         elif self._drag_mode == "move":
-            if not self._floating:
+            dist = (g - self._press_global).manhattanLength()
+            if not self._floating and dist >= DRAG_THRESHOLD_PX:
                 self.set_drag_highlight(True)
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
                 self.set_floating(True)
-            self.move(self._drag_start_pos + delta)
+                self.float_move.emit(g + self._press_offset)
+            if self._floating:
+                self.float_move.emit(g + self._press_offset)
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if self._drag_mode is None:
             super().mouseReleaseEvent(event)
             return
+        g = event.globalPosition().toPoint()
         if self._drag_mode.startswith("resize"):
             self._finish_resize()
-        elif self._drag_mode == "move":
-            self._finish_move()
+        elif self._drag_mode == "move" and self._floating:
+            self.float_end.emit(g)
         self.releaseMouse()
         self._drag_mode = None
         self._press_global = None

@@ -47,6 +47,15 @@ from starlink_widget.core.widget_prefs import (
 )
 
 from starlink_widget.ui.animations import DURATION_OPACITY
+from starlink_widget.ui.grid_drag import (
+    DropTarget,
+    apply_drop_target,
+    compute_drop_targets,
+    pick_drop_target,
+    target_identity,
+)
+from starlink_widget.ui.grid_layout import metrics_area_width, place_metric_tiles
+from starlink_widget.ui.layout_drag_preview import LayoutDragPreview
 from starlink_widget.ui.metric_tile import MetricTile
 from starlink_widget.ui.settings_dialog import SettingsDialog
 from starlink_widget.ui.snap_corner_hint import SnapCandidate, SnapCornerHint
@@ -229,7 +238,11 @@ class MainWindow(QWidget):
         self._root_layout.addWidget(self.alert_label)
 
         self._metrics_wrap = QWidget()
-        self._metrics_wrap.setMinimumHeight(400)
+        self._metrics_layout = QGridLayout(self._metrics_wrap)
+        self._metrics_layout.setSpacing(8)
+        self._metrics_layout.setColumnStretch(0, 1)
+        self._metrics_layout.setColumnStretch(1, 1)
+        self._layout_preview = LayoutDragPreview(self._metrics_wrap)
         self._metrics_wrap.setVisible(False)
         self._root_layout.addWidget(self._metrics_wrap)
 
@@ -243,7 +256,10 @@ class MainWindow(QWidget):
         prefs = get_card_pref(key)
         tile = MetricTile(field.label, key, prefs, parent=self._metrics_wrap)
         tile.hide()
+        tile.float_move.connect(self._on_tile_float_move)
+        tile.float_end.connect(self._on_tile_float_end)
         tile.prefs_changed.connect(self._on_tile_prefs_changed)
+        tile.layout_preview.connect(self._on_tile_layout_preview)
         # #region agent log
         debug_log(
             "main_window:_create_metric_tile",
@@ -263,6 +279,8 @@ class MainWindow(QWidget):
         tile = self._metric_tiles.pop(key, None)
         if tile is None:
             return
+        if tile.parent() is self._metrics_wrap:
+            self._metrics_layout.removeWidget(tile)
         tile.hide()
         tile.setParent(None)
         tile.deleteLater()
@@ -511,48 +529,43 @@ class MainWindow(QWidget):
             raise
 
     def _relayout_grid_positions(self, *, animated: bool = False) -> None:
-        """Applique les positions absolues sauvegardées."""
-        max_h = 0
-        placed_rects = []
-        total_w = WIDGET_WIDTH - 28
-        spacing = 8
-        col_w = (total_w - spacing) // 2
-        
-        for key, tile in self._metric_tiles.items():
-            prefs = tile.prefs()
-            
-            # Enforce explicit width (width_px takes priority over col_span)
-            if prefs.width_px > 0:
-                w = min(prefs.width_px, total_w)
-            else:
-                w = total_w if prefs.col_span >= 2 else col_w
-            tile.setFixedWidth(w)
-            
-            if hasattr(tile, "prepare_for_grid_layout"):
-                tile.prepare_for_grid_layout()
-            
-            my_rect = QRect(prefs.x, prefs.y, tile.width(), tile.height())
-            
-            # Prevent initial overlaps
-            while True:
-                collision = False
-                for r in placed_rects:
-                    if r.intersects(my_rect.adjusted(2, 2, -2, -2)):
-                        collision = True
-                        break
-                if collision:
-                    my_rect.moveTop(my_rect.top() + 20)
-                else:
-                    break
-            
-            tile.move(my_rect.topLeft())
-            placed_rects.append(my_rect)
-            
-            bottom = my_rect.bottom()
-            if bottom > max_h:
-                max_h = bottom
+        """Réorganise la grille 2 colonnes avec alignement strict."""
+        has_orphans = any(
+            tile.parent() is not self._metrics_wrap
+            for tile in self._metric_tiles.values()
+        )
+        if self._float_tile is not None and not has_orphans:
+            return
+        starts: Dict[str, object] = {}
+        if animated:
+            for key, tile in self._metric_tiles.items():
+                if tile.parent() is not self._metrics_wrap:
+                    continue
+                starts[key] = tile.geometry()
 
-        self._metrics_wrap.setMinimumHeight(max_h + 20)
+        self._remove_float_placeholder()
+
+        metric_keys = load_ordered_metric_keys()
+        placement: List[tuple[str, MetricTile, CardPrefs]] = []
+        for key in metric_keys:
+            if key not in self._metric_tiles:
+                continue
+            tile = self._metric_tiles[key]
+            placement.append((key, tile, get_card_pref(key)))
+        place_metric_tiles(self._metrics_layout, placement)
+
+        if animated and starts:
+            from starlink_widget.ui.animations import animate_geometry
+
+            for key, tile in self._metric_tiles.items():
+                if key not in starts:
+                    continue
+                end = tile.geometry()
+                start = starts[key]
+                if start.topLeft() != end.topLeft():
+                    tile.setGeometry(start)
+                    animate_geometry(tile, end, self._metrics_wrap)
+
         self._fit_to_content()
 
     def _reload_preferences(self) -> None:
