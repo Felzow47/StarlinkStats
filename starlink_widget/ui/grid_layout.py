@@ -102,6 +102,11 @@ def _resolve_columns(
             assign[key] = prefs.grid_col
 
     for key, _widget, _prefs in tiles:
+        anchor = stack_map.get(key)
+        if anchor is not None and anchor in assign:
+            assign[key] = assign[anchor]
+
+    for key, _widget, _prefs in tiles:
         if key in assign:
             continue
         anchor = stack_map.get(key)
@@ -156,6 +161,11 @@ def _resolve_columns(
         if col >= GRID_COLS:
             col = 0
             col_stack = [0, 0]
+
+    for key, _widget, _prefs in tiles:
+        anchor = stack_map.get(key)
+        if anchor is not None and anchor in assign:
+            assign[key] = assign[anchor]
 
     return assign
 
