@@ -8,14 +8,24 @@ import socket
 import subprocess
 import time
 import urllib.request
+from datetime import date
 from typing import List, Optional
+
+from PyQt6.QtCore import QSettings
 
 from starlink_widget.core.config import AppConfig
 from starlink_widget.core.connectivity import ping_host
 
+SETTINGS_ORG = "StarlinkWidget"
+SETTINGS_APP = "Widget"
+ISP_QUOTA_DAY_KEY = "isp_quota_day"
+ISP_QUOTA_COUNT_KEY = "isp_quota_count"
+ISP_CACHED_NAME_KEY = "isp_cached_name"
+
+ISP_LOOKUP_DAILY_MAX = 5
 _ISP_CACHE_NAME = ""
 _ISP_CACHE_AT = 0.0
-_ISP_CACHE_TTL_S = 60.0
+_ISP_CACHE_TTL_S = 3600.0
 
 
 def _run(cmd: List[str], timeout: float = 5.0) -> str:
@@ -84,21 +94,71 @@ def can_reach_dish(
 
 
 def clear_isp_cache() -> None:
+    """Vide le cache mémoire (pas le quota journalier ni le nom persisté)."""
     global _ISP_CACHE_NAME, _ISP_CACHE_AT
     _ISP_CACHE_NAME = ""
     _ISP_CACHE_AT = 0.0
 
 
-def get_isp_name(*, force_refresh: bool = False) -> Optional[str]:
-    """Nom du FAI via l'IP publique (ex. Free, Orange, Starlink)."""
+def _isp_settings() -> QSettings:
+    return QSettings(SETTINGS_ORG, SETTINGS_APP)
+
+
+def _today_key() -> str:
+    return date.today().isoformat()
+
+
+def _load_persisted_isp_name() -> str:
+    return str(_isp_settings().value(ISP_CACHED_NAME_KEY) or "").strip()
+
+
+def _isp_quota_count(for_day: str) -> int:
+    settings = _isp_settings()
+    stored_day = str(settings.value(ISP_QUOTA_DAY_KEY) or "")
+    if stored_day != for_day:
+        return 0
+    try:
+        return max(0, int(settings.value(ISP_QUOTA_COUNT_KEY) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _isp_quota_remaining(*, daily_max: int = ISP_LOOKUP_DAILY_MAX) -> int:
+    limit = max(0, daily_max)
+    return max(0, limit - _isp_quota_count(_today_key()))
+
+
+def _record_isp_lookup(name: str) -> None:
+    settings = _isp_settings()
+    today = _today_key()
+    count = _isp_quota_count(today) + 1
+    settings.setValue(ISP_QUOTA_DAY_KEY, today)
+    settings.setValue(ISP_QUOTA_COUNT_KEY, count)
+    settings.setValue(ISP_CACHED_NAME_KEY, name)
+    settings.sync()
+
+
+def get_isp_name(
+    *,
+    force_refresh: bool = False,
+    daily_max: int = ISP_LOOKUP_DAILY_MAX,
+) -> Optional[str]:
+    """Nom du FAI via ip-api.com, plafonné à daily_max requêtes HTTP / jour."""
     global _ISP_CACHE_NAME, _ISP_CACHE_AT
     now = time.monotonic()
+    persisted = _load_persisted_isp_name()
     if (
         not force_refresh
         and _ISP_CACHE_NAME
         and now - _ISP_CACHE_AT < _ISP_CACHE_TTL_S
     ):
         return _ISP_CACHE_NAME
+    if not force_refresh and persisted and _isp_quota_remaining(daily_max=daily_max) <= 0:
+        _ISP_CACHE_NAME = persisted
+        _ISP_CACHE_AT = now
+        return persisted
+    if _isp_quota_remaining(daily_max=daily_max) <= 0:
+        return persisted or None
     try:
         req = urllib.request.Request(
             "http://ip-api.com/json/?fields=status,isp,org",
@@ -109,11 +169,16 @@ def get_isp_name(*, force_refresh: bool = False) -> Optional[str]:
         if data.get("status") == "success":
             name = (data.get("isp") or data.get("org") or "").strip()
             if name:
+                _record_isp_lookup(name)
                 _ISP_CACHE_NAME = name
                 _ISP_CACHE_AT = now
                 return name
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         pass
+    if persisted:
+        _ISP_CACHE_NAME = persisted
+        _ISP_CACHE_AT = now
+        return persisted
     return _ISP_CACHE_NAME or None
 
 
@@ -145,9 +210,9 @@ def get_connection_profile_name() -> Optional[str]:
     return name
 
 
-def get_off_network_label() -> str:
+def get_off_network_label(*, daily_max: int = ISP_LOOKUP_DAILY_MAX) -> str:
     """Libellé du réseau actuel quand on n'est pas sur Starlink."""
-    isp = get_isp_name()
+    isp = get_isp_name(daily_max=daily_max)
     if isp:
         return isp
     ssid = get_wifi_ssid()

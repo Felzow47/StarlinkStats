@@ -7,6 +7,7 @@
   "starlink_wifi_ssids": [],
   "starlink_require_dish_route": true,
   "hide_after_ticks_off_network": 1,
+  "isp_lookup_daily_max": 5,
   "_comment_network": "Détection auto : la dish (192.168.100.1) doit répondre — marche en Ethernet ou WiFi (SSID libre). starlink_wifi_ssids = secours optionnel.",
   "_comment_display": "Champs affichés : menu Personnaliser (clic droit) ou icône barre des tâches"
 }

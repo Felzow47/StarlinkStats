@@ -48,13 +48,14 @@ class PollWorker(QThread):
             on_lan = is_on_starlink_lan(self.config)
             visible = self._network_tracker.update(on_lan)
             if visible != self._last_visible:
+                if visible:
+                    clear_isp_cache()
                 self._last_visible = visible
                 self.visibility_changed.emit(visible)
 
             snapshot = StatusSnapshot(on_starlink_lan=visible)
 
             if visible:
-                clear_isp_cache()
                 dish = self._client.fetch_status()
                 skip = {
                     "on_starlink_lan",
@@ -77,7 +78,9 @@ class PollWorker(QThread):
                 snapshot.critical_alerts = collect_critical_alerts(snapshot)
             else:
                 snapshot.on_starlink_lan = False
-                snapshot.off_network_label = get_off_network_label()
+                snapshot.off_network_label = get_off_network_label(
+                    daily_max=self.config.isp_lookup_daily_max
+                )
 
             self.snapshot_ready.emit(snapshot)
             self.msleep(self.config.poll_interval_ms)
