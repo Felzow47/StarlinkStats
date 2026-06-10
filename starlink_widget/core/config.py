@@ -8,9 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+from starlink_widget.core.paths import app_root
 
 
 @dataclass
@@ -34,7 +32,7 @@ class AppConfig:
 
 def load_config(path: Optional[Path] = None) -> AppConfig:
     cfg = AppConfig()
-    config_path = path or (_project_root() / "config.json")
+    config_path = path or (app_root() / "config.json")
     if config_path.exists():
         with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
@@ -55,4 +53,4 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
 
 
 def config_path() -> Path:
-    return _project_root() / "config.json"
+    return app_root() / "config.json"

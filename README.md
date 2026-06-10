@@ -1,5 +1,9 @@
 # Widget Starlink Always-on-Top
 
+<p align="center">
+  <img src="assets/Vector.svg" alt="Starlink Widget" width="128">
+</p>
+
 [English version](README.en.md)
 
 Petit widget de bureau Windows (Python + PyQt6) qui affiche en temps réel l'état de votre antenne Starlink via gRPC local (`192.168.100.1:9200`).
@@ -57,9 +61,27 @@ Hors mode personnalisation, le widget est **click-through** : il ne gêne pas le
 
 ## Installation
 
-Pour les tests utiliser le script `launch_widget.bat` dans le dossier `scripts`
+### Installeur Windows (recommande)
 
+1. Compiler (installeur **NSIS** ; telecharge automatiquement au premier build, sans Inno Setup) :
+
+```powershell
+.\scripts\build_installer.ps1
 ```
+
+2. Distribuer `dist\installer\StarlinkWidget-Setup.exe`
+
+L'assistant d'installation propose :
+- **Lancer au demarrage de Windows** (tache planifiee, delai 30 s)
+- Raccourci Bureau (optionnel)
+
+Installation par defaut : `%LOCALAPPDATA%\StarlinkWidget`
+
+**Icone** : `assets\Vector.svg` (source) / `assets\starlink_widget.ico` (genere automatiquement au build).
+
+### Developpement / tests
+
+```powershell
 .\scripts\launch_widget.bat
 ```
 
@@ -131,10 +153,18 @@ starlink-widget/
     workers/        # thread de polling
     vendor/         # starlink_grpc (sparky8512)
   scripts/
+    build_installer.ps1    # PyInstaller + NSIS
     launch_widget.bat      # lancement + reset prefs (dev)
     clean_widget.ps1       # nettoyage appelé par launch_widget.bat
-    install_autostart.ps1
+    register_autostart.ps1   # tache planifiee (installeur + tray)
+    install_autostart.ps1    # variante dev (pythonw)
     uninstall_autostart.ps1
+    uninstall_cleanup.ps1   # desinstallation complete (registre, tache, AppData)
+  installer/
+    starlink_widget.spec
+    starlink_widget.nsi
+  assets/
+    README.txt
   config.json.example
   requirements.txt
 ```

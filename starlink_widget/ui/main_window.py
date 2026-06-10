@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from starlink_widget.core import autostart
 from starlink_widget.core.config import AppConfig
+from starlink_widget.core.paths import app_icon_path
 from starlink_widget.debug_log import debug_exception, debug_log
 from starlink_widget.core.card_prefs import CardPrefs, get_card_pref
 from starlink_widget.core.display_fields import (
@@ -190,6 +191,7 @@ class MainWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFixedWidth(WIDGET_WIDTH)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
+        self._apply_window_icon()
 
         self._build_ui()
         self._rebuild_metrics_grid()
@@ -1051,8 +1053,29 @@ class MainWindow(QWidget):
                 HealthState.RED, self._last_status_text, flashing=flashing
             )
 
+    def _apply_window_icon(self) -> None:
+        path = app_icon_path()
+        if path is not None:
+            self.setWindowIcon(QIcon(str(path)))
+
     def _make_tray_icon(self, hex_color: str = OK_GREEN) -> QIcon:
         size = 64
+        icon_path = app_icon_path()
+        if icon_path is not None:
+            base = QIcon(str(icon_path)).pixmap(size, size)
+            if not base.isNull():
+                pix = QPixmap(size, size)
+                pix.fill(Qt.GlobalColor.transparent)
+                painter = QPainter(pix)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                painter.drawPixmap(0, 0, base)
+                painter.setBrush(QColor(hex_color))
+                painter.setPen(Qt.PenStyle.NoPen)
+                badge = 14
+                painter.drawEllipse(size - badge - 2, size - badge - 2, badge, badge)
+                painter.end()
+                return QIcon(pix)
         pix = QPixmap(size, size)
         pix.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pix)

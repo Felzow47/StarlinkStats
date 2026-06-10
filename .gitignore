@@ -6,5 +6,8 @@ _grpc_tools/
 *.egg-info/
 .pytest_cache/
 *.log
-*.log
-*.log
+build/
+dist/
+tools/
+*.iss
+installer/wizard_sidebar.bmp

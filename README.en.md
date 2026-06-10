@@ -1,5 +1,9 @@
 # Starlink Always-on-Top Widget
 
+<p align="center">
+  <img src="assets/Vector.svg" alt="Starlink Widget" width="128">
+</p>
+
 [Version française](README.md)
 
 Small Windows desktop widget (Python + PyQt6) that displays your Starlink dish status in real time via local gRPC (`192.168.100.1:9200`).
@@ -58,9 +62,27 @@ When not customizing, the widget is **click-through**: it does not block clicks 
 
 ## Installation
 
-For testing, use `launch_widget.bat` in the `scripts` folder:
+### Windows installer (recommended)
 
+1. Build (**NSIS** installer; downloaded automatically on first run, no Inno Setup):
+
+```powershell
+.\scripts\build_installer.ps1
 ```
+
+2. Ship `dist\installer\StarlinkWidget-Setup.exe`
+
+The setup wizard offers:
+- **Start at Windows logon** (scheduled task, 30 s delay)
+- Desktop shortcut (optional)
+
+Default install path: `%LOCALAPPDATA%\StarlinkWidget`
+
+**Icon:** `assets\Vector.svg` (source) / `assets\starlink_widget.ico` (generated on build).
+
+### Development / testing
+
+```powershell
 .\scripts\launch_widget.bat
 ```
 
@@ -131,11 +153,19 @@ starlink-widget/
     ui/             # window, grid, metric tiles, Customize dialog
     workers/        # polling thread
     vendor/         # starlink_grpc (sparky8512)
+  installer/
+    starlink_widget.spec
+    starlink_widget.nsi
+  assets/
+    README.txt
   scripts/
+    build_installer.ps1    # PyInstaller + NSIS
     launch_widget.bat
     clean_widget.ps1
-    install_autostart.ps1
+    register_autostart.ps1   # scheduled task (installer + tray)
+    install_autostart.ps1    # dev variant (pythonw)
     uninstall_autostart.ps1
+    uninstall_cleanup.ps1   # full uninstall (registry, task, AppData)
   config.json.example
   requirements.txt
 ```

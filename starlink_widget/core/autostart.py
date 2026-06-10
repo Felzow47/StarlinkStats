@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+import winreg
 from pathlib import Path
 
+from starlink_widget.core.paths import app_root, is_frozen, scripts_dir
+
 TASK_NAME = "StarlinkWidget"
-
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
 
 
 def _run(cmd: list[str]) -> tuple[int, str]:
@@ -25,37 +25,77 @@ def _run(cmd: list[str]) -> tuple[int, str]:
         return 1, str(exc)
 
 
+def _register_script() -> Path | None:
+    script = scripts_dir() / "register_autostart.ps1"
+    if script.is_file():
+        return script
+    dev = Path(__file__).resolve().parents[2] / "scripts" / "register_autostart.ps1"
+    return dev if dev.is_file() else None
+
+
+def _autostart_args() -> tuple[str, str, str]:
+    """(exe_path, working_dir, arguments) pour register_autostart.ps1."""
+    if is_frozen():
+        exe = Path(sys.executable).resolve()
+        return str(exe), str(exe.parent), ""
+    root = app_root()
+    pythonw = root / ".venv" / "Scripts" / "pythonw.exe"
+    return str(pythonw), str(root), "-m starlink_widget"
+
+
+def _run_key_enabled() -> bool:
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+        ) as key:
+            winreg.QueryValueEx(key, TASK_NAME)
+            return True
+    except OSError:
+        return False
+
+
 def is_enabled() -> bool:
     code, output = _run(["schtasks", "/Query", "/TN", TASK_NAME])
-    return code == 0 and TASK_NAME.lower() in output.lower()
+    if code == 0 and TASK_NAME.lower() in output.lower():
+        return True
+    return _run_key_enabled()
 
 
 def enable() -> bool:
-    script = _project_root() / "scripts" / "install_autostart.ps1"
-    if not script.exists():
+    script = _register_script()
+    if script is None:
         return False
+    exe, workdir, args = _autostart_args()
     code, _ = _run(
         [
             "powershell",
+            "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
             "-File",
             str(script),
+            "-ExePath",
+            exe,
+            "-WorkingDirectory",
+            workdir,
+            "-Arguments",
+            args,
         ]
     )
     return code == 0
 
 
 def disable() -> bool:
-    script = _project_root() / "scripts" / "uninstall_autostart.ps1"
-    if script.exists():
+    uninstall = scripts_dir() / "uninstall_autostart.ps1"
+    if uninstall.is_file():
         code, _ = _run(
             [
                 "powershell",
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                str(script),
+                str(uninstall),
             ]
         )
         return code == 0
