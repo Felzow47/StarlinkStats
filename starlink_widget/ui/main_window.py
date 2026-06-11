@@ -150,6 +150,8 @@ class MainWindow(QWidget):
         self._flash_on = False
         self._current_state = HealthState.GREEN
         self._last_status_text = "Initialisation"
+        self._on_starlink_lan = True
+        self._off_network_label = ""
         self._worker: PollWorker | None = None
         self._last_snapshot: Optional[StatusSnapshot] = None
         self._visible_fields: Set[str] = load_visible_fields()
@@ -205,6 +207,8 @@ class MainWindow(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        if not self._on_starlink_lan:
+            self._apply_off_network(self._off_network_label)
         QTimer.singleShot(0, self._layout_metrics_when_ready)
 
     def _layout_metrics_when_ready(self) -> None:
@@ -1153,14 +1157,35 @@ class MainWindow(QWidget):
                 self._settings_dialog.close()
             self.hide()
 
+    def _apply_off_network(self, label: str) -> None:
+        """Affiche l'état hors Starlink (pas le dernier snapshot valide)."""
+        self._flash_timer.stop()
+        self._current_state = HealthState.HIDDEN
+        self._last_status_text = f"Pas sur Starlink · {label}"
+
+        show_header = "connection_status" in self._visible_fields
+        self._header_wrap.setVisible(show_header)
+        if show_header:
+            self._set_status("Hors réseau Starlink", label)
+
+        self._apply_paint_state(HealthState.HIDDEN, flashing=False)
+        self.alert_label.setText("")
+        self.alert_label.setVisible(False)
+        self._metrics_wrap.setVisible(False)
+        self._fit_to_content()
+
     def _on_snapshot(self, snapshot: StatusSnapshot) -> None:
         if not snapshot.on_starlink_lan:
             label = snapshot.off_network_label or "autre réseau"
+            self._on_starlink_lan = False
+            self._off_network_label = label
+            self._apply_off_network(label)
             self._update_tray(
                 HealthState.HIDDEN,
                 f"Pas sur Starlink · {label}",
             )
             return
+        self._on_starlink_lan = True
         self._last_snapshot = snapshot
         self._apply_snapshot(snapshot)
 
