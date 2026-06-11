@@ -3,11 +3,9 @@
   "starlink_port": 9200,
   "ping_target": "1.1.1.1",
   "poll_interval_ms": 1000,
-  "starlink_gateway_prefixes": ["192.168.1."],
-  "starlink_wifi_ssids": [],
-  "starlink_require_dish_route": true,
   "hide_after_ticks_off_network": 1,
+  "dish_reboot_grace_ticks": 45,
   "isp_lookup_daily_max": 5,
-  "_comment_network": "Détection auto : la dish (192.168.100.1) doit répondre — marche en Ethernet ou WiFi (SSID libre). starlink_wifi_ssids = secours optionnel.",
+  "_comment_network": "Detection reseau : Starlink uniquement si le port dish 9200 repond. Si la dish reboot, on garde l'etat Starlink pendant dish_reboot_grace_ticks.",
   "_comment_display": "Champs affichés : menu Personnaliser (clic droit) ou icône barre des tâches"
 }

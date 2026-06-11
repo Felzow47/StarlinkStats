@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from starlink_widget.core.paths import app_root
 
@@ -17,12 +17,8 @@ class AppConfig:
     starlink_port: int = 9200
     ping_target: str = "1.1.1.1"
     poll_interval_ms: int = 1000
-    starlink_gateway_prefixes: List[str] = field(
-        default_factory=lambda: ["192.168.1."]
-    )
-    starlink_wifi_ssids: List[str] = field(default_factory=list)
-    starlink_require_dish_route: bool = True
     hide_after_ticks_off_network: int = 1
+    dish_reboot_grace_ticks: int = 45
     isp_lookup_daily_max: int = 5
 
     @property

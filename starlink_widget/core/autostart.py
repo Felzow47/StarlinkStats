@@ -1,7 +1,8 @@
-"""Windows scheduled task for autostart at logon."""
+"""Windows autostart registration for current user."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import winreg
@@ -10,6 +11,14 @@ from pathlib import Path
 from starlink_widget.core.paths import app_root, is_frozen, scripts_dir
 
 TASK_NAME = "StarlinkWidget"
+
+
+def _powershell_executable() -> str:
+    windir = Path(os.environ.get("WINDIR", r"C:\Windows"))
+    candidate = windir / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if candidate.is_file():
+        return str(candidate)
+    return "powershell"
 
 
 def _run(cmd: list[str]) -> tuple[int, str]:
@@ -37,10 +46,10 @@ def _autostart_args() -> tuple[str, str, str]:
     """(exe_path, working_dir, arguments) pour register_autostart.ps1."""
     if is_frozen():
         exe = Path(sys.executable).resolve()
-        return str(exe), str(exe.parent), ""
+        return str(exe), str(exe.parent), "--autostart"
     root = app_root()
     pythonw = root / ".venv" / "Scripts" / "pythonw.exe"
-    return str(pythonw), str(root), "-m starlink_widget"
+    return str(pythonw), str(root), "-m starlink_widget --autostart"
 
 
 def _run_key_enabled() -> bool:
@@ -69,8 +78,9 @@ def enable() -> bool:
     exe, workdir, args = _autostart_args()
     code, _ = _run(
         [
-            "powershell",
+            _powershell_executable(),
             "-NoProfile",
+            "-NonInteractive",
             "-ExecutionPolicy",
             "Bypass",
             "-File",
@@ -91,7 +101,9 @@ def disable() -> bool:
     if uninstall.is_file():
         code, _ = _run(
             [
-                "powershell",
+                _powershell_executable(),
+                "-NoProfile",
+                "-NonInteractive",
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",

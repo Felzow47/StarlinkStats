@@ -95,10 +95,8 @@ Installation par defaut : `%LOCALAPPDATA%\StarlinkWidget`
   "starlink_port": 9200,
   "ping_target": "1.1.1.1",
   "poll_interval_ms": 1000,
-  "starlink_gateway_prefixes": ["192.168.1."],
-  "starlink_wifi_ssids": [],
-  "starlink_require_dish_route": true,
   "hide_after_ticks_off_network": 1,
+  "dish_reboot_grace_ticks": 45,
   "isp_lookup_daily_max": 5
 }
 ```
@@ -108,12 +106,11 @@ Installation par defaut : `%LOCALAPPDATA%\StarlinkWidget`
 | `starlink_host` / `starlink_port` | Adresse gRPC de la dish |
 | `ping_target` | Cible du test Internet (ICMP) |
 | `poll_interval_ms` | Intervalle de polling |
-| `starlink_wifi_ssids` | SSID(s) Starlink en secours (souvent vide si Ethernet) |
-| `starlink_require_dish_route` | Vérifier aussi la présence d'une route vers `192.168.100.x` |
 | `hide_after_ticks_off_network` | Nombre de cycles avant masquage hors Starlink (1 ≈ 1 s) |
+| `dish_reboot_grace_ticks` | Tolérance (cycles) pendant un reboot dish avant de passer hors Starlink |
 | `isp_lookup_daily_max` | Requêtes max / jour vers ip-api.com pour le nom du FAI (défaut : 5) |
 
-**Détection réseau** : par défaut, le widget teste si la dish répond (port 9200 ou ping). Le SSID n'est requis que si vous listez des noms dans `starlink_wifi_ssids`.
+**Détection réseau** : le widget considère Starlink actif uniquement si le port dish `9200` répond. En cas de reboot dish, `dish_reboot_grace_ticks` évite un basculement immédiat vers « Hors réseau Starlink ».
 
 ---
 

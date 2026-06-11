@@ -12,6 +12,6 @@ if (-not (Test-Path -LiteralPath $VenvPythonw)) {
 & (Join-Path $PSScriptRoot "register_autostart.ps1") `
     -ExePath $VenvPythonw `
     -WorkingDirectory $ProjectRoot `
-    -Arguments "-m starlink_widget"
+    -Arguments "-m starlink_widget --autostart"
 
 Write-Host "Lancement manuel: $VenvPythonw -m starlink_widget"

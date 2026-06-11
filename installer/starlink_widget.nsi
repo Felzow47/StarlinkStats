@@ -41,6 +41,8 @@ SetCompressor /SOLID lzma
 Page custom OptionsPage OptionsPageLeave
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_NOAUTOCLOSE
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
+!define MUI_FINISHPAGE_RUN_TEXT "Lancer ${APP_NAME}"
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -74,6 +76,21 @@ Function OptionsPageLeave
 FunctionEnd
 
 Section "Installation" SecInstall
+  DetailPrint "Reset du dossier d'installation (prefs utilisateur conservees)..."
+  SetOutPath "$PLUGINSDIR"
+  File "..\scripts\install_reset.ps1"
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\install_reset.ps1" -InstallDir "$INSTDIR"'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    DetailPrint "ERREUR : reset installation non termine."
+    DetailPrint "Code retour PowerShell : $0"
+    DetailPrint "Sortie PowerShell : $1"
+    MessageBox MB_ICONSTOP|MB_OK "Le reset du dossier d'installation a echoue.$\r$\n$\r$\nSortie : $1$\r$\n$\r$\nL'installation va s'arreter."
+    Abort
+  ${EndIf}
+  Delete "$PLUGINSDIR\install_reset.ps1"
+
   SetOutPath "$INSTDIR"
   File /r "${DIST_DIR}\*.*"
 
@@ -81,6 +98,7 @@ Section "Installation" SecInstall
   File "..\scripts\register_autostart.ps1"
   File "..\scripts\uninstall_autostart.ps1"
   File "..\scripts\uninstall_cleanup.ps1"
+  File "..\scripts\install_reset.ps1"
 
   IfFileExists "$INSTDIR\config.json" +3 0
     SetOutPath "$INSTDIR"
@@ -110,27 +128,32 @@ Section "Installation" SecInstall
 
   ${If} $AutostartChecked == ${BST_CHECKED}
     DetailPrint "Configuration du demarrage automatique..."
-    nsExec::ExecToStack "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$INSTDIR\scripts\register_autostart.ps1`" -ExePath `"$INSTDIR\${APP_EXE}`" -WorkingDirectory `"$INSTDIR`""
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\scripts\register_autostart.ps1" -ExePath "$INSTDIR\${APP_EXE}" -WorkingDirectory "$INSTDIR" -Arguments "--autostart"'
     Pop $0
     Pop $1
     ${If} $0 != 0
       DetailPrint "ATTENTION : demarrage automatique non configure."
+      DetailPrint "Code retour PowerShell : $0"
+      DetailPrint "Sortie PowerShell : $1"
       MessageBox MB_ICONEXCLAMATION|MB_OK "Starlink Widget est installe, mais le demarrage automatique n'a pas pu etre configure.$\r$\n$\r$\nVous pouvez l'activer plus tard depuis l'icone dans la barre des taches."
     ${Else}
       DetailPrint "Demarrage automatique configure."
     ${EndIf}
   ${EndIf}
+
 SectionEnd
 
 Section "Uninstall"
   DetailPrint "Arret du widget et nettoyage systeme..."
-  nsExec::ExecToLog "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$INSTDIR\scripts\uninstall_cleanup.ps1`""
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\scripts\uninstall_cleanup.ps1"'
 
   DetailPrint "Suppression des raccourcis..."
   Delete "$DESKTOP\${APP_NAME}.lnk"
+  Delete "$SMSTARTUP\${APP_NAME}.lnk"
   RMDir /r "$SMPROGRAMS\${APP_NAME}"
 
   DetailPrint "Suppression des entrees registre..."
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StarlinkWidget"
   DeleteRegKey HKCU "${APP_SETTINGS_REG_KEY}"
   DeleteRegKey HKCU "${UNINST_REG_KEY}"
 

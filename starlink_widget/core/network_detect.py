@@ -14,7 +14,6 @@ from typing import List, Optional
 from PyQt6.QtCore import QSettings
 
 from starlink_widget.core.config import AppConfig
-from starlink_widget.core.connectivity import ping_host
 
 SETTINGS_ORG = "StarlinkWidget"
 SETTINGS_APP = "Widget"
@@ -67,30 +66,19 @@ def get_default_gateway() -> Optional[str]:
     return None
 
 
-def has_route_to_dish(host: str = "192.168.100.1") -> bool:
-    output = _run(["route", "print", "-4"])
-    prefix = ".".join(host.split(".")[:3])
-    for line in output.splitlines():
-        if prefix in line or host in line:
-            if "192.168.100" in line:
-                return True
-    return False
-
-
 def can_reach_dish(
     host: str = "192.168.100.1",
     port: int = 9200,
     *,
     timeout_ms: int = 350,
 ) -> bool:
-    """Teste si la dish Starlink répond (Ethernet ou WiFi, SSID indifférent)."""
+    """Teste si le port gRPC Starlink est joignable."""
     timeout_s = max(0.05, timeout_ms / 1000)
     try:
         with socket.create_connection((host, port), timeout=timeout_s):
             return True
     except OSError:
-        pass
-    return ping_host(host, timeout_ms=timeout_ms)
+        return False
 
 
 def clear_isp_cache() -> None:
@@ -228,22 +216,63 @@ def get_off_network_label(*, daily_max: int = ISP_LOOKUP_DAILY_MAX) -> str:
 
 
 def is_on_starlink_lan(config: AppConfig) -> bool:
-    """Vrai si la dish Starlink est joignable sur le LAN local."""
+    """Vrai si le protocole/port dédié de la dish répond."""
     host = config.starlink_host
     port = config.starlink_port
+    return can_reach_dish(host, port)
 
-    if can_reach_dish(host, port):
-        return True
 
-    if config.starlink_wifi_ssids:
-        ssid = get_wifi_ssid()
-        if ssid and ssid in config.starlink_wifi_ssids:
-            return True
+def active_network_signature() -> str:
+    """Empreinte du réseau actif (SSID/profil/passerelle)."""
+    ssid = get_wifi_ssid() or ""
+    profile = get_connection_profile_name() or ""
+    gateway = get_default_gateway() or ""
+    parts = [
+        f"wifi:{ssid.lower()}",
+        f"profile:{profile.lower()}",
+        f"gw:{gateway}",
+    ]
+    return "|".join(parts)
 
-    if config.starlink_require_dish_route and has_route_to_dish(host):
-        return True
 
-    return False
+class StarlinkPresenceTracker:
+    """Évite les faux "hors réseau" pendant un reboot de la dish."""
+
+    def __init__(
+        self,
+        *,
+        hide_after_ticks: int = 1,
+        reboot_grace_ticks: int = 45,
+    ) -> None:
+        self._visibility = NetworkPresenceTracker(hide_after_ticks=hide_after_ticks)
+        self.reboot_grace_ticks = max(0, reboot_grace_ticks)
+        self._grace_left = 0
+        self._last_starlink_signature = ""
+
+    def update(self, protocol_reachable: bool) -> tuple[bool, bool]:
+        signature = active_network_signature()
+        if protocol_reachable:
+            if signature:
+                self._last_starlink_signature = signature
+            self._grace_left = self.reboot_grace_ticks
+            on_starlink_lan = True
+        else:
+            same_network = (
+                bool(signature)
+                and bool(self._last_starlink_signature)
+                and signature == self._last_starlink_signature
+            )
+            unknown_network = not bool(signature)
+            if self._grace_left > 0 and (same_network or unknown_network):
+                self._grace_left -= 1
+                on_starlink_lan = True
+            else:
+                self._grace_left = 0
+                on_starlink_lan = False
+                if signature and signature != self._last_starlink_signature:
+                    self._last_starlink_signature = ""
+        visible = self._visibility.update(on_starlink_lan)
+        return on_starlink_lan, visible
 
 
 class NetworkPresenceTracker:

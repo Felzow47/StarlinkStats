@@ -1060,29 +1060,14 @@ class MainWindow(QWidget):
 
     def _make_tray_icon(self, hex_color: str = OK_GREEN) -> QIcon:
         size = 64
-        icon_path = app_icon_path()
-        if icon_path is not None:
-            base = QIcon(str(icon_path)).pixmap(size, size)
-            if not base.isNull():
-                pix = QPixmap(size, size)
-                pix.fill(Qt.GlobalColor.transparent)
-                painter = QPainter(pix)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-                painter.drawPixmap(0, 0, base)
-                painter.setBrush(QColor(hex_color))
-                painter.setPen(Qt.PenStyle.NoPen)
-                badge = 14
-                painter.drawEllipse(size - badge - 2, size - badge - 2, badge, badge)
-                painter.end()
-                return QIcon(pix)
         pix = QPixmap(size, size)
         pix.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pix)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setBrush(QColor(hex_color))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(10, 10, size - 20, size - 20)
+        # Bord subtil pour garder un point lisible sur themes clairs/sombres.
+        painter.setPen(QPen(QColor(20, 22, 26, 140), 2))
+        painter.drawEllipse(8, 8, size - 16, size - 16)
         painter.end()
         return QIcon(pix)
 

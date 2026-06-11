@@ -96,10 +96,8 @@ Default install path: `%LOCALAPPDATA%\StarlinkWidget`
   "starlink_port": 9200,
   "ping_target": "1.1.1.1",
   "poll_interval_ms": 1000,
-  "starlink_gateway_prefixes": ["192.168.1."],
-  "starlink_wifi_ssids": [],
-  "starlink_require_dish_route": true,
   "hide_after_ticks_off_network": 1,
+  "dish_reboot_grace_ticks": 45,
   "isp_lookup_daily_max": 5
 }
 ```
@@ -109,12 +107,11 @@ Default install path: `%LOCALAPPDATA%\StarlinkWidget`
 | `starlink_host` / `starlink_port` | Dish gRPC address |
 | `ping_target` | Internet ping target (ICMP) |
 | `poll_interval_ms` | Polling interval |
-| `starlink_wifi_ssids` | Optional Starlink SSID(s) (often empty on Ethernet) |
-| `starlink_require_dish_route` | Also check for a route to `192.168.100.x` |
 | `hide_after_ticks_off_network` | Poll cycles before hiding off Starlink (1 ≈ 1 s) |
+| `dish_reboot_grace_ticks` | Grace cycles during dish reboot before switching to off-Starlink |
 | `isp_lookup_daily_max` | Max ip-api.com requests/day for ISP name (default: 5) |
 
-**Network detection:** by default the widget checks whether the dish responds (port 9200 or ping). SSID is only used if you list names in `starlink_wifi_ssids`.
+**Network detection:** Starlink is considered reachable only when the dish `9200` port responds. During dish reboot, `dish_reboot_grace_ticks` prevents immediate switching to "Off Starlink network."
 
 ---
 
