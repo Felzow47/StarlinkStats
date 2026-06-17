@@ -1,4 +1,4 @@
-"""Grille 2 colonnes — empilement par colonne (pas de lignes synchronisées)."""
+"""Grille 2 colonnes - empilement par colonne (pas de lignes synchronisées)."""
 
 from __future__ import annotations
 
@@ -638,7 +638,7 @@ def _prefs_are_compact(prefs: CardPrefs) -> bool:
 def normalize_metric_spans(
     tiles: list[tuple[str, QWidget, CardPrefs]],
 ) -> list[tuple[str, Widget, CardPrefs]]:
-    """RÃ©duit col_span si la grille ne peut pas l'honorer (ex. 1Ã—2 â†’ 1Ã—1)."""
+    """RÃ©duit col_span si la grille ne peut pas l'honorer (ex. 1Ã- 2 â†’ 1Ã- 1)."""
     changed = False
     for key, widget, prefs, _row, _col, eff_span, _y in _layout_slots(tiles):
         new_span = col_span(prefs)

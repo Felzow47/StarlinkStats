@@ -1,10 +1,10 @@
-"""Carte métrique — drag/resize fluide (mode Personnaliser)."""
+"""Carte métrique - drag/resize fluide (mode Personnaliser)."""
 
 from __future__ import annotations
 
 from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PyQt6.QtGui import QMouseEvent  # noqa: F401 – utilisé dans les signatures
+from PyQt6.QtGui import QMouseEvent  # noqa: F401 - utilisé dans les signatures
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -62,7 +62,7 @@ GRIP_MIN_H = 56
 
 
 class EdgeHandle(QWidget):
-    """Poignée invisible sur un bord du tile — curseur + détection click."""
+    """Poignée invisible sur un bord du tile - curseur + détection click."""
 
     EDGES = ("top", "bottom", "left", "right")
     CURSORS = {
@@ -198,7 +198,7 @@ class MetricTile(QWidget):
 
         value_row = QHBoxLayout()
         value_row.setSpacing(4)
-        self.value_label = QLabel("—")
+        self.value_label = QLabel("- ")
         self.value_label.setObjectName("metricValue")
         value_row.addWidget(self.value_label)
         self.unit_label = QLabel("")

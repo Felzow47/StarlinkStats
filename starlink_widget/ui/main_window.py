@@ -66,6 +66,8 @@ from starlink_widget.ui.styles import (
     CARD_BORDER,
     CORNER_RADIUS,
     OK_GREEN,
+    TEXT_PRIMARY,
+    WARN_AMBER,
     WIDGET_WIDTH,
     format_status_title,
     label_styles,
@@ -754,8 +756,18 @@ class MainWindow(QWidget):
             hint = self._root_layout.sizeHint()
             self.setFixedSize(WIDGET_WIDTH, max(hint.height(), 72))
 
-    def _set_status(self, raw_text: str, subtitle: str = "") -> None:
-        self.status_title.setText(format_status_title(raw_text))
+    def _set_status(
+        self,
+        title: str,
+        subtitle: str = "",
+        *,
+        title_color: str = TEXT_PRIMARY,
+    ) -> None:
+        self.status_title.setText(title)
+        self.status_title.setStyleSheet(
+            "font-size: 17px; font-weight: 700; letter-spacing: -0.3px; "
+            f"padding: 0px; margin: 0px; color: {title_color};"
+        )
         self._title_row.updateGeometry()
         self._title_row._layout_row()
         if subtitle:
@@ -1088,7 +1100,7 @@ class MainWindow(QWidget):
             self._make_tray_icon(status_color(state, flashing))
         )
         title = format_status_title(status_text)
-        self.tray.setToolTip(f"Starlink — {title}")
+        self.tray.setToolTip(f"Starlink - {title}")
 
     def _setup_tray(self) -> None:
         self.tray = QSystemTrayIcon(self)
@@ -1166,7 +1178,7 @@ class MainWindow(QWidget):
         show_header = "connection_status" in self._visible_fields
         self._header_wrap.setVisible(show_header)
         if show_header:
-            self._set_status("Hors réseau Starlink", label)
+            self._set_status(format_status_title("Hors réseau Starlink"), label)
 
         self._apply_paint_state(HealthState.HIDDEN, flashing=False)
         self.alert_label.setText("")
@@ -1196,11 +1208,13 @@ class MainWindow(QWidget):
 
         show_header = "connection_status" in self._visible_fields
         self._header_wrap.setVisible(show_header)
+        alerts_in_title = status_text.startswith("EN LIGNE - ")
         if show_header:
-            subtitle = ""
-            if status_text.startswith("EN LIGNE — "):
-                subtitle = status_text.split(" — ", 1)[1]
-            self._set_status(status_text, subtitle)
+            if alerts_in_title:
+                alert_text = status_text.split(" - ", 1)[1]
+                self._set_status(alert_text, title_color=WARN_AMBER)
+            else:
+                self._set_status(format_status_title(status_text))
 
         if health == HealthState.RED:
             if not self._flash_timer.isActive():
@@ -1218,7 +1232,7 @@ class MainWindow(QWidget):
 
         show_alerts = "alerts_summary" in self._visible_fields
         alerts = snapshot.critical_alerts
-        if show_alerts and alerts:
+        if show_alerts and alerts and not alerts_in_title:
             self.alert_label.setText(" · ".join(alerts))
             self.alert_label.setVisible(True)
         else:
@@ -1234,7 +1248,7 @@ class MainWindow(QWidget):
             for key, tile in self._metric_tiles.items():
                 formatted = format_field(snapshot, key)
                 if formatted is None:
-                    tile.set_value("—", "")
+                    tile.set_value("- ", "")
                 else:
                     value, unit = formatted
                     if key == "azimuth_delta" and snapshot.azimuth_delta_deg is not None:

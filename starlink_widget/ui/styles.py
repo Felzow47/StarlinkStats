@@ -48,8 +48,8 @@ def format_status_title(raw: str) -> str:
     }
     if raw in mapping:
         return mapping[raw]
-    if raw.startswith("EN LIGNE — "):
-        return "En ligne"
+    if raw.startswith("EN LIGNE - "):
+        return raw.split(" - ", 1)[1]
     return raw.capitalize() if raw.isupper() else raw
 
 

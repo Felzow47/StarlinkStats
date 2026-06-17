@@ -1,4 +1,4 @@
-"""Mini graphique sparkline — courbe lissée style Starlink."""
+"""Mini graphique sparkline - courbe lissée style Starlink."""
 
 from __future__ import annotations
 

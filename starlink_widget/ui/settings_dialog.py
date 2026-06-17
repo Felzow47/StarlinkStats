@@ -1,4 +1,4 @@
-"""Dialogue de personnalisation — aperçu immédiat + glisser-déposer pour l'ordre."""
+"""Dialogue de personnalisation - aperçu immédiat + glisser-déposer pour l'ordre."""
 
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ class SettingsDialog(QDialog):
             if field is None:
                 continue
             label = labels.get(key, field.label)
-            item = QListWidgetItem(f"{field.category} — {label}")
+            item = QListWidgetItem(f"{field.category} - {label}")
             item.setData(Qt.ItemDataRole.UserRole, key)
             item.setFlags(
                 item.flags()

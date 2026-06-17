@@ -120,18 +120,18 @@ def evaluate_health(snapshot: StatusSnapshot) -> Tuple[HealthState, str]:
 
     if not snapshot.internet_ok:
         if critical:
-            return HealthState.ORANGE, "EN LIGNE — " + ", ".join(critical)
+            return HealthState.ORANGE, "EN LIGNE - " + ", ".join(critical)
         if (snapshot.state or "").upper() == "CONNECTED":
             return HealthState.GREEN, "EN LIGNE"
         return HealthState.ORANGE, "SANS INTERNET"
 
     if critical:
-        return HealthState.ORANGE, "EN LIGNE — " + ", ".join(critical)
+        return HealthState.ORANGE, "EN LIGNE - " + ", ".join(critical)
 
     return HealthState.GREEN, "EN LIGNE"
 
 
 def format_mbps(bps: Optional[float]) -> str:
     if bps is None or (isinstance(bps, float) and math.isnan(bps)):
-        return "—"
+        return "- "
     return f"{bps / 1_000_000:.1f}"

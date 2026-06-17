@@ -1,4 +1,4 @@
-"""Système de drag & drop grille — simple et prévisible."""
+"""Système de drag & drop grille - simple et prévisible."""
 
 from __future__ import annotations
 
