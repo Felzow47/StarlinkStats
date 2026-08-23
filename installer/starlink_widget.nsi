@@ -154,6 +154,7 @@ Section "Uninstall"
 
   DetailPrint "Suppression des entrees registre..."
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StarlinkWidget"
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "StarlinkWidget"
   DeleteRegKey HKCU "${APP_SETTINGS_REG_KEY}"
   DeleteRegKey HKCU "${UNINST_REG_KEY}"
 

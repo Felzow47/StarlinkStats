@@ -1,6 +1,7 @@
 #Requires -Version 5.1
 $TaskName = "StarlinkWidget"
 $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$ApprovedKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 $ErrorActionPreference = "Stop"
 
 function Remove-LegacyScheduledTask {
@@ -20,6 +21,7 @@ function Remove-LegacyScheduledTask {
 
 try {
     Remove-ItemProperty -Path $RunKey -Name $TaskName -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $ApprovedKey -Name $TaskName -ErrorAction SilentlyContinue
 
     $deletedTask = Remove-LegacyScheduledTask -Name $TaskName
     if ($deletedTask) {

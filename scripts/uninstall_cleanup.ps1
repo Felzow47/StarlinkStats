@@ -9,6 +9,7 @@ $AppName = "Starlink Widget"
 $TaskName = "StarlinkWidget"
 $SettingsRegKey = "HKCU:\Software\StarlinkWidget"
 $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$ApprovedKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 $UninstallRegKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$AppName"
 $Schtasks = Join-Path $env:WINDIR "System32\schtasks.exe"
 
@@ -61,6 +62,7 @@ Start-Sleep -Milliseconds 400
 
 Write-Host "[uninstall] Suppression demarrage automatique..."
 Remove-ItemProperty -Path $RunKey -Name $TaskName -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path $ApprovedKey -Name $TaskName -ErrorAction SilentlyContinue
 if (Test-Path -LiteralPath $Schtasks) {
     & $env:ComSpec /d /c "`"$Schtasks`" /Delete /TN `"$TaskName`" /F >nul 2>&1"
 }

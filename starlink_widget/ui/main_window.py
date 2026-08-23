@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QLabel,
     QMenu,
+    QMessageBox,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
@@ -1123,6 +1124,7 @@ class MainWindow(QWidget):
         self.autostart_action.setChecked(autostart.is_enabled())
         self.autostart_action.triggered.connect(self._toggle_autostart)
         menu.addAction(self.autostart_action)
+        menu.aboutToShow.connect(self._sync_autostart_action)
         menu.addSeparator()
         quit_action = QAction("Quitter le widget", self)
         quit_action.triggered.connect(self._quit_app)
@@ -1138,13 +1140,22 @@ class MainWindow(QWidget):
             else:
                 self.show()
 
+    def _sync_autostart_action(self) -> None:
+        self.autostart_action.setChecked(autostart.is_enabled())
+
     def _toggle_autostart(self, checked: bool) -> None:
         if checked:
             ok = autostart.enable()
+            if not ok:
+                QMessageBox.warning(
+                    self,
+                    "Démarrage avec Windows",
+                    "Impossible d'activer le démarrage automatique.\n"
+                    "Vérifiez Paramètres Windows → Applications → Démarrage.",
+                )
         else:
             ok = autostart.disable()
-        if not ok:
-            self.autostart_action.setChecked(autostart.is_enabled())
+        self.autostart_action.setChecked(autostart.is_enabled())
 
     def _start_worker(self) -> None:
         self._worker = PollWorker(self.config, self)

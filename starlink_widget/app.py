@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 import traceback
 
 from PyQt6.QtWidgets import QApplication
@@ -13,6 +14,7 @@ from starlink_widget.ui.boot_screen import BootScreen
 from starlink_widget.ui.main_window import MainWindow
 
 AUTOSTART_FLAG = "--autostart"
+AUTOSTART_DELAY_SECONDS = 30
 
 
 def _debug_excepthook(exc_type, exc, tb) -> None:
@@ -30,6 +32,8 @@ def _debug_excepthook(exc_type, exc, tb) -> None:
 def main() -> int:
     sys.excepthook = _debug_excepthook
     autostart_launch = AUTOSTART_FLAG in sys.argv[1:]
+    if autostart_launch:
+        time.sleep(AUTOSTART_DELAY_SECONDS)
     qt_argv = [sys.argv[0], *[arg for arg in sys.argv[1:] if arg != AUTOSTART_FLAG]]
     app = QApplication(qt_argv)
     app.setQuitOnLastWindowClosed(False)

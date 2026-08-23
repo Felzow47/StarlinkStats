@@ -1,7 +1,8 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Demarrage au logon (cle Run + delai, sans droits admin).
+    Demarrage au logon (cle Run + autorisation StartupApproved, sans droits admin).
+    Le delai apres logon est gere par l'application (--autostart).
 #>
 param(
     [Parameter(Mandatory = $true)]
@@ -9,11 +10,18 @@ param(
     [string]$WorkingDirectory = "",
     [string]$Arguments = "",
     [string]$TaskName = "StarlinkWidget",
-    [int]$DelaySeconds = 30
+    [int]$DelaySeconds = 30,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArgs
 )
+# python subprocess passe parfois "--autostart" hors de -Arguments ; PowerShell le voit comme switch.
+if (-not $Arguments -and $RemainingArgs) {
+    $Arguments = ($RemainingArgs | ForEach-Object { "$_".Trim() }) -join " "
+}
 
 $ErrorActionPreference = "Stop"
 $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$ApprovedKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 
 function Remove-LegacyScheduledTask {
     param(
@@ -40,35 +48,24 @@ try {
     Remove-ItemProperty -Path $RunKey -Name $TaskName -ErrorAction SilentlyContinue
     Remove-LegacyScheduledTask -Name $TaskName
 
-    $scriptsDir = Join-Path $WorkingDirectory "scripts"
-    New-Item -ItemType Directory -Force -Path $scriptsDir | Out-Null
-
-    $vbsPath = Join-Path $scriptsDir "autostart_launch.vbs"
-    $delayMs = [Math]::Max(0, $DelaySeconds) * 1000
-    $runCmd = if ($Arguments) { "`"$ExePath`" $Arguments" } else { "`"$ExePath`"" }
-    $escapedWorkingDirectory = $WorkingDirectory.Replace('"', '""')
-    $escapedRunCmd = $runCmd.Replace('"', '""')
-    $vbs = @"
-WScript.Sleep $delayMs
-Set sh = CreateObject("WScript.Shell")
-sh.CurrentDirectory = "$escapedWorkingDirectory"
-sh.Run "$escapedRunCmd", 0, False
-"@
-    Set-Content -Path $vbsPath -Value $vbs -Encoding ASCII -Force
+    $vbsPath = Join-Path $WorkingDirectory "scripts\autostart_launch.vbs"
+    if (Test-Path -LiteralPath $vbsPath) {
+        Remove-Item -LiteralPath $vbsPath -Force -ErrorAction SilentlyContinue
+    }
 
     New-Item -Path $RunKey -Force | Out-Null
+    $runCmd = if ($Arguments) { "`"$ExePath`" $Arguments" } else { "`"$ExePath`"" }
+    Set-ItemProperty -Path $RunKey -Name $TaskName -Value $runCmd
 
-    $wscript = Join-Path $env:WINDIR "System32\wscript.exe"
-    if (-not (Test-Path -LiteralPath $wscript)) {
-        $wscript = "wscript.exe"
-    }
-    $launcher = "`"$wscript`" //B //Nologo `"$vbsPath`""
-    Set-ItemProperty -Path $RunKey -Name $TaskName -Value $launcher
+    # Windows peut laisser l'entree desactivee dans Parametres > Applications > Demarrage
+    # (octet 0x03) meme si la cle Run existe. Sans 0x02, le widget ne se lance pas.
+    New-Item -Path $ApprovedKey -Force | Out-Null
+    $enabledBytes = [byte[]](0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+    New-ItemProperty -Path $ApprovedKey -Name $TaskName -PropertyType Binary -Value $enabledBytes -Force | Out-Null
 
-    Write-Host "Demarrage automatique configure (delai ${DelaySeconds}s)."
+    Write-Host "Demarrage automatique configure (delai applicatif ${DelaySeconds}s via --autostart)."
     exit 0
 } catch {
     Write-Error "Echec configuration demarrage automatique : $($_.Exception.Message)"
     exit 1
 }
-

@@ -79,7 +79,7 @@ class FlatLoadingBar(QWidget):
 class BootScreen(QDialog):
     """Mandatory onboarding message shown before normal tray usage."""
 
-    AUTO_CLOSE_MS = 60_000
+    AUTO_CLOSE_MS = 30_000
 
     def __init__(self, parent=None) -> None:
         super().__init__(
